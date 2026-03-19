@@ -66,6 +66,26 @@ The sigmoid gate pushes many values close to 0 or 1, creating a bimodal distribu
 
 ---
 
+## Terminology Glossary
+
+| Term | Plain English | In This Paper |
+|------|--------------|---------------|
+| **Sparsity** | Most values in a collection are zero (or near-zero). Like a classroom where only 3 out of 30 students raise their hand — the response is "sparse." | The sigmoid gate outputs are mostly near 0 or near 1, so most head outputs get nearly zeroed out. Only a few heads "speak up" for any given token. This is **input-dependent sparsity** — which heads are active changes based on what the model is looking at. |
+| **Sigmoid** | A function that squashes any number into the range (0, 1). Large positive inputs → ~1, large negative inputs → ~0, zero → 0.5. | Used as the gate: one learnable parameter per head gets passed through sigmoid to produce the dimmer value. |
+| **Non-linearity** | Any operation that isn't just "multiply by a constant and add." Linear operations can be collapsed together; non-linear ones can't. | The sigmoid between W_v and W_O prevents them from collapsing into a single matrix, preserving the expressiveness of both layers. |
+| **Attention head** | Transformers split attention into multiple parallel "heads," each learning to focus on different patterns (e.g., one head might track syntax, another tracks meaning). | Each head gets its own independent gate — "head-specific gating." One head can shut off while another stays fully active. |
+| **Attention sink** | The first token (BOS) receives disproportionately high attention, not because it's important, but because softmax forces the model to attend *somewhere*. | Gating eliminates this by letting heads output near-zero, so they don't need to dump unused attention on BOS. |
+| **PPL (Perplexity)** | A score measuring how "surprised" the model is by text. Lower = better. A PPL of 10 means the model is, on average, choosing between 10 equally likely next words. | The paper reports up to 0.2 PPL reduction with gating — a meaningful improvement at scale. |
+| **MMLU** | A benchmark of ~16,000 multiple-choice questions across 57 subjects (math, history, law, medicine, etc.). Higher = better. | Gated models score +2 points on MMLU compared to ungated baselines. |
+| **RULER** | A benchmark specifically testing how well models handle long sequences (longer than what they were trained on). Higher = better. | Gated models score +10 points — the biggest win in the paper, because removing attention sinks helps length generalization. |
+| **SDPA** | Scaled Dot-Product Attention — the core attention operation: softmax(QK^T / √d) × V. The standard way transformers compute "who should attend to whom." | G1 (the best gate position) is placed right after SDPA output, before the dense projection. |
+| **MoE (Mixture of Experts)** | An architecture where only a subset of parameters are active for each input. A "router" picks which expert networks to use. Allows massive models with lower compute cost. | The paper tests on a 15B MoE model — gating helps even at this scale. |
+| **Loss spike** | A sudden, sharp increase in training loss — the model temporarily "forgets" what it learned. Common in large-scale training and can destabilize or crash runs. | Gating nearly eliminates loss spikes, making training more stable and allowing higher learning rates. |
+| **Linear collapse** | When two consecutive linear layers (y = Ax, then z = By) are mathematically equivalent to a single layer (z = BAx = Cx). You have twice the parameters but no extra capability. | The W_v → W_O path in standard attention suffers from this. The sigmoid gate breaks the collapse. |
+| **Length generalization** | The ability of a model to perform well on sequences longer than what it saw during training (e.g., trained on 4K tokens, tested on 32K). | Gated models generalize much better because they don't rely on attention sinks, which are calibrated to training-time sequence lengths. |
+
+---
+
 ## Open Questions / Things to Explore
 
 - How does this interact with nanochat's MQA + QK normalization?
