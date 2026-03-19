@@ -21,6 +21,18 @@ Result: common words = 1 token, rare words = multiple tokens.
 - nanochat: custom Rust-based BPE, 32K–65K vocab
 - nanoGPT: reuses OpenAI's GPT-2 tokenizer (50K vocab) via tiktoken
 
+## Metrics & Evaluation
+
+**Learning Curve** — A plot showing how model performance changes over training. Specifically:
+- **Training loss** and **validation loss** over epochs/steps
+- **Training perplexity** and **validation perplexity** over epochs/steps
+- Used to verify the model is converging and not overfitting
+- **Required by TAs** as proof that training actually happened
+
+> Note: The comparison table column "Ease of use" refers to *framework difficulty* (how hard it is to learn the tool). The ML meaning above — loss/perplexity plots — is what the TAs require in the final paper.
+
+**Perplexity** — A measure of how "surprised" the model is by the data. Lower = better. Mathematically, it's `exp(loss)`. A perplexity of 5 means the model is roughly as uncertain as choosing between 5 equally likely options for the next token.
+
 ## Nanochat Pipeline Summary
 
 | Step | What happens | Time |

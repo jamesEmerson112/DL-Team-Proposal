@@ -116,6 +116,20 @@ SFT Training Data
 
 ---
 
+## Monitoring Training Progress
+
+Each stage (except tokenizer and inference) should log metrics every N steps:
+- **Training loss** and **validation loss** — is the model converging?
+- **Training perplexity** and **validation perplexity** — how "surprised" is the model? (`perplexity = exp(loss)`)
+- **RL stage:** also log reward scores
+
+Plot these as **learning curves** (metrics over epochs/steps). The TAs require these plots in the final paper as proof of training.
+
+Watch for:
+- Val loss diverging from train loss → overfitting
+- Loss plateauing early → learning rate or data issues
+- Loss spiking → gradient instability
+
 ## Total Pipeline
 
 - **Time:** ~4 hours on 8xH100

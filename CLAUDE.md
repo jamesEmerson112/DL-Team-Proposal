@@ -8,7 +8,7 @@ This is a **Deep Learning Team Proposal** repository focused on evaluating and c
 
 ## Repository Structure
 
-- `James_paper/` — Team member contributions (research notes, drafts)
+- `docs/James_notes/` — James's research notes (numbered 01-07, with 00 as table of contents)
 - `README.md` — Project overview
 - `LICENSE` — MIT License
 
@@ -25,6 +25,6 @@ This is a **research-only repository** — no code implementation. Work products
 ## Key Context
 
 - nanochat is the official successor to nanoGPT (released Oct 2025)
-- The team has an existing comparison table covering language, dependencies, performance, parameters, training stages, cost, and learning curve across all three frameworks
+- The team has an existing comparison table covering language, dependencies, performance, parameters, training stages, cost, and ease of use across all three frameworks
 - llm.c offers ~7% faster performance than PyTorch with minimal dependencies (pure C/CUDA)
 - nanochat introduces a "Complexity Dial" (`--depth` parameter) that auto-configures all hyperparameters

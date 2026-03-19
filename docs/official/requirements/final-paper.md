@@ -26,7 +26,7 @@ _Outline of the final paper structure — add/remove sections as needed._
 
 _What experiments, metrics, or outputs need to be in the paper?_
 
-- [ ] TBD
+- [ ] **Learning curves (REQUIRED by TAs)** — plots of training loss, validation loss, training perplexity, and validation perplexity over epochs/steps. Must be generated from your own training runs to prove the model was actually trained.
 - [ ] TBD
 - [ ] TBD
 

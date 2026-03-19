@@ -13,6 +13,6 @@
 | **Distributed** | DDP (PyTorch) | MPI + NCCL | Yes |
 | **Inference / UI** | No | No | Yes (KV cache + web UI) |
 | **Cost to train** | Varies | Varies | ~$100 (8xH100, 4hrs) |
-| **Learning curve** | Low | High (C/CUDA) | Low–Medium |
+| **Ease of use** | Low barrier | High barrier (C/CUDA) | Low–Medium barrier |
 | **Status** | Deprecated | Active | Active |
 | **Best for** | Quick experiments | Low-level GPU learning | Full ChatGPT-like pipeline |

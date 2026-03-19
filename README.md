@@ -26,9 +26,21 @@ Raw Text ──▶ [Tokenizer] ──▶ [Pretrain] ──▶ [SFT] ──▶ [R
 
 Individual research notes are in `docs/<name>_notes/`:
 
-- [comparison-table.md](docs/James_notes/comparison-table.md) — nanoGPT vs llm.c vs nanochat
-- [nanogpt-notes.md](docs/James_notes/nanogpt-notes.md) — nanoGPT research
-- [llmc-notes.md](docs/James_notes/llmc-notes.md) — llm.c research
-- [nanochat-notes.md](docs/James_notes/nanochat-notes.md) — nanochat research
-- [datasets-benchmarks-comparison.md](docs/James_notes/datasets-benchmarks-comparison.md) — datasets & benchmarks across all 3
-- [key-terms.md](docs/James_notes/key-terms.md) — glossary (BPE, SFT, RLHF, etc.)
+- [00 — Table of Contents](docs/James_notes/00_table-of-contents.md) — start here
+- [01 — Key Terms](docs/James_notes/01_key-terms.md) — glossary (BPE, SFT, RLHF, etc.)
+- [02 — Comparison Table](docs/James_notes/02_comparison-table.md) — nanoGPT vs llm.c vs nanochat
+- [03 — nanoGPT Notes](docs/James_notes/03_nanogpt-notes.md) — nanoGPT research
+- [04 — llm.c Notes](docs/James_notes/04_llmc-notes.md) — llm.c research
+- [05 — nanochat Notes](docs/James_notes/05_nanochat-notes.md) — nanochat research
+- [06 — Datasets & Benchmarks](docs/James_notes/06_datasets-benchmarks-comparison.md) — datasets & benchmarks across all 3
+- [07 — Training Stages](docs/James_notes/07_training-stages.md) — nanochat pipeline deep dive
+- [08 — Parameter Golf](docs/James_notes/08_parameter-golf.md) — OpenAI's 16 MB model compression challenge
+- [09 — NeurIPS Papers](docs/James_notes/09_neurips-papers.md) — 5 relevant papers for Related Work
+
+### Parameter Golf (Competition)
+
+We're participating in [OpenAI's Parameter Golf](https://github.com/openai/parameter-golf) — train the best LM in 16 MB / 10 min on 8xH100.
+
+- [Overview & Setup](docs/parameter-golf/00_overview.md)
+- [Experiments Tracker](docs/parameter-golf/experiments.md)
+- [Findings & Insights](docs/parameter-golf/findings.md)

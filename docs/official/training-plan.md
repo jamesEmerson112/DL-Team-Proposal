@@ -8,6 +8,7 @@
 - `--depth` setting: TBD
 - Hardware: TBD
 - Expected output: TBD
+- Metrics to log: training loss, validation loss, training perplexity, validation perplexity
 - Notes: _e.g., tokenizer choice, vocab size, training duration_
 
 ## Stage 2: Supervised Fine-Tuning (SFT)
@@ -16,6 +17,7 @@
 - Config changes from Stage 1: TBD
 - Hardware: TBD
 - Expected output: TBD
+- Metrics to log: training loss, validation loss, training perplexity, validation perplexity
 - Notes: _e.g., instruction format, number of epochs_
 
 ## Stage 3: RLHF
@@ -24,6 +26,7 @@
 - Reward model details: TBD
 - Hardware: TBD
 - Expected output: TBD
+- Metrics to log: training loss, validation loss, reward scores
 - Notes: _e.g., PPO vs DPO, reward signal design_
 
 ## Stage 4: Chat / Inference
@@ -33,6 +36,8 @@
 - Hardware: TBD
 - Expected output: TBD
 - Notes: _e.g., quantization, latency targets_
+
+> **Reminder:** Learning curves (loss + perplexity plots) from stages 1-3 are **required by TAs** in the final paper. Log metrics from the start.
 
 ---
 
