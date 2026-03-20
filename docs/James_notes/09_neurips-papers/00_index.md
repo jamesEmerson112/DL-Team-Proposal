@@ -1,6 +1,6 @@
 # NeurIPS Papers — Related Work Reference
 
-> 5 papers relevant to our project (nanochat training pipeline + Parameter Golf competition).
+> 6 papers relevant to our project (nanochat training pipeline + Parameter Golf competition).
 
 ## Paper 1: Gated Attention for Large Language Models
 
@@ -131,6 +131,34 @@ Introduces DataComp-LM (DCLM) — a benchmark and testbed for developing better 
 
 ---
 
+## Paper 6: FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving
+
+**MLSys 2025 — Best Paper Award**
+
+- **Authors:** Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yineng Zhang, Stephanie Wang, Baris Kasikci, Arvind Krishnamurthy, Luis Ceze, Vinod Grover, Tianqi Chen (UW, NVIDIA, CMU, Perplexity, SGLang)
+- **Paper:** [arXiv:2501.01005](https://arxiv.org/abs/2501.01005) | [MLSys Proceedings](https://proceedings.mlsys.org/paper_files/paper/2025/file/dbf02b21d77409a2db30e56866a8ab3a-Paper-Conference.pdf) | [GitHub](https://github.com/flashinfer-ai/flashinfer)
+
+### Summary
+
+Introduces FlashInfer — a customizable attention engine for LLM inference serving. Addresses KV-cache storage heterogeneity with a unified block-sparse row (BSR) format, provides JIT-compiled attention templates for custom kernels, and uses load-balanced dynamic scheduling compatible with CUDAGraph for diverse serving workloads.
+
+### Key Findings
+
+- Unified BSR format represents all KV-cache layouts (paged, radix-tree, tree-masked) under one kernel family
+- JIT-compiled templates let users create custom fused kernels (e.g., RoPE-fused attention) in ~20 lines of code
+- 29–69% inter-token latency reduction vs. compiler backends; 28–30% latency reduction for long-context inference
+- 70–83% bandwidth utilization on skewed batches vs. ~45% for FlashAttention
+- Adopted by SGLang, vLLM, and MLC Engine; NVIDIA releasing TensorRT-LLM kernels through FlashInfer
+
+### Relevance to Our Project
+
+- **nanochat uses Flash Attention 3** with SDPA fallback — FlashInfer extends and generalizes Flash Attention for serving workloads
+- **nanochat's KV cache** (`engine.py`) could benefit from FlashInfer's unified BSR format for more efficient inference
+- **Parameter Golf** — JIT-fused custom kernels could reduce latency under tight compute constraints
+- Systems-level complement to the architecture/theory papers above
+
+---
+
 ## Quick Reference
 
 | # | Paper | Year | Track | Type |
@@ -140,3 +168,4 @@ Introduces DataComp-LM (DCLM) — a benchmark and testbed for developing better 
 | 3 | Superposition Yields Robust Neural Scaling | NeurIPS 2025 | Main | Theory (scaling) |
 | 4 | The FineWeb Datasets | NeurIPS 2024 | Datasets | **Dataset** |
 | 5 | DataComp-LM (DCLM) | NeurIPS 2024 | Datasets | Benchmark |
+| 6 | FlashInfer | MLSys 2025 | Systems | **Inference** |
