@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Deep Learning Team Proposal** repository focused on evaluating and comparing minimal LLM training frameworks: **nanoGPT**, **llm.c**, and **nanochat** (all by Andrej Karpathy). The goal is to produce a team proposal document recommending an approach for a DL project.
+This is a **Deep Learning Team Proposal** repository. The project objective is to **train a language model using nanochat, then create multiple model variants to produce a learning curve comparison** studying which techniques (e.g., SFT, RLHF, depth/hyperparameter configurations) contribute most to model improvement. Background research also covers **nanoGPT** and **llm.c** (all by Andrej Karpathy) for comparative context.
 
 ## Repository Structure
 
