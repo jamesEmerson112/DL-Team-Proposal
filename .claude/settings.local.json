@@ -4,7 +4,8 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:openai.com)",
-      "WebFetch(domain:blog.neurips.cc)"
+      "WebFetch(domain:blog.neurips.cc)",
+      "WebFetch(domain:deepwiki.com)"
     ]
   }
 }
