@@ -13,3 +13,5 @@ Read in order:
 | 07 | [Training Stages](07_training-stages.md) | nanochat's 4-stage pipeline in detail |
 | 08 | [Parameter Golf](08_parameter-golf.md) | OpenAI's 16 MB model compression challenge (related work) |
 | 09 | [NeurIPS Papers](09_neurips-papers.md) | 5 relevant papers for Related Work (attention, RL, scaling, FineWeb, DCLM) |
+| 10 | [Approach Draft](10_approach-draft.md) | Project proposal "Approach" section — phases, experiments, deliverables |
+| 11 | [Proposal Draft (Overleaf)](11_proposal-draft-overleaf.md) | LaTeX-ready Approach section with \cite{} references and new bibliography entries |
