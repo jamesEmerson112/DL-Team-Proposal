@@ -15,3 +15,4 @@ Read in order:
 | 09 | [NeurIPS Papers](09_neurips-papers.md) | 5 relevant papers for Related Work (attention, RL, scaling, FineWeb, DCLM) |
 | 10 | [Approach Draft](10_approach-draft.md) | Project proposal "Approach" section — phases, experiments, deliverables |
 | 11 | [Proposal Draft (Overleaf)](11_proposal-draft-overleaf.md) | LaTeX-ready Approach section with \cite{} references and new bibliography entries |
+| 12 | [Running nanochat with multiple GPUs](12_running-nanochat-with-multiple-gpus.md) | End-to-end guide for training nanochat on RunPod 8×H100 — setup, wandb, pipeline, gotchas, d=3 baseline results, next-steps playbook |
