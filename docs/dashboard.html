@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DL Team Proposal — Project Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-card: #161b22;
+    --bg-card-hover: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+    --orange: #f0883e;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+    --radius: 10px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(13,17,23,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 2rem;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
+  }
+  .header-left h1 { font-size: 1.15rem; font-weight: 600; }
+  .header-left p { font-size: 0.8rem; color: var(--text-muted); }
+  .pills { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .pill {
+    font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.7rem;
+    border-radius: 20px; white-space: nowrap; font-family: var(--mono);
+  }
+  .pill-red { background: rgba(248,81,73,0.15); color: var(--red); border: 1px solid rgba(248,81,73,0.3); }
+  .pill-green { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .pill-blue { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+  .pill-yellow { background: rgba(210,153,34,0.15); color: var(--yellow); border: 1px solid rgba(210,153,34,0.3); }
+
+  /* ── Main Grid ── */
+  main { max-width: 1280px; margin: 0 auto; padding: 1.5rem 2rem 3rem; display: grid; gap: 1.25rem; }
+
+  /* ── Card ── */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+  }
+  .card-title {
+    font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); margin-bottom: 1rem;
+  }
+
+  /* ── Two-Track Overview ── */
+  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .track { padding: 1.25rem; border-radius: 8px; background: var(--bg); border-left: 4px solid; }
+  .track-course { border-left-color: var(--orange); }
+  .track-pgolf { border-left-color: var(--purple); }
+  .track h3 { font-size: 1rem; margin-bottom: 0.5rem; }
+  .track h3 .badge { font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 12px; margin-left: 0.5rem; vertical-align: middle; }
+  .badge-orange { background: rgba(240,136,62,0.15); color: var(--orange); }
+  .badge-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .track-items { list-style: none; font-size: 0.88rem; }
+  .track-items li { padding: 0.3rem 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+  .track-items li:last-child { border-bottom: none; }
+  .status { font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 4px; font-family: var(--mono); }
+  .status-done { background: rgba(63,185,80,0.15); color: var(--green); }
+  .status-draft { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .status-tbd { background: rgba(248,81,73,0.15); color: var(--red); }
+  .constraint-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; }
+  .chip {
+    font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 6px; font-family: var(--mono);
+    background: rgba(188,140,255,0.1); color: var(--purple); border: 1px solid rgba(188,140,255,0.2);
+  }
+  .track-meta { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; }
+  .track-meta strong { color: var(--text); }
+
+  /* ── Progress Bars ── */
+  .progress-row {
+    display: grid; grid-template-columns: 180px 1fr 50px; align-items: center; gap: 1rem;
+    padding: 0.55rem 0; border-bottom: 1px solid var(--border); position: relative;
+  }
+  .progress-row:last-child { border-bottom: none; }
+  .progress-label { font-size: 0.85rem; }
+  .progress-track { height: 22px; background: rgba(48,54,61,0.6); border-radius: 6px; overflow: hidden; position: relative; }
+  .progress-fill {
+    height: 100%; border-radius: 6px; transition: width 0.8s ease;
+    position: relative;
+  }
+  .progress-fill.green { background: linear-gradient(90deg, #238636, var(--green)); }
+  .progress-fill.yellow { background: linear-gradient(90deg, #9e6a03, var(--yellow)); }
+  .progress-fill.red { background: linear-gradient(90deg, #b62324, var(--red)); }
+  .progress-pct { font-size: 0.8rem; font-family: var(--mono); color: var(--text-muted); text-align: right; }
+  .progress-row .tooltip-text {
+    visibility: hidden; opacity: 0;
+    position: absolute; bottom: 100%; left: 180px; z-index: 10;
+    background: #2d333b; color: var(--text); font-size: 0.78rem;
+    padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border);
+    white-space: nowrap; transition: opacity 0.2s; pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .progress-row:hover .tooltip-text { visibility: visible; opacity: 1; }
+
+  /* ── Phase Flow ── */
+  .phases { display: flex; align-items: flex-start; gap: 0; }
+  .phase-box {
+    flex: 1; padding: 1.25rem; border-radius: 8px; background: var(--bg);
+    border: 1px solid var(--border); position: relative;
+  }
+  .phase-box.partial { border-color: var(--yellow); }
+  .phase-box.not-started { border-color: var(--border); }
+  .phase-arrow {
+    display: flex; align-items: center; justify-content: center;
+    width: 48px; flex-shrink: 0; font-size: 1.5rem; color: var(--border);
+  }
+  .phase-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .phase-header h3 { font-size: 0.95rem; }
+  .phase-status { font-size: 0.65rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .phase-status.partial-s { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .phase-status.blocked-s { background: rgba(248,81,73,0.1); color: var(--red); }
+  .task-list { list-style: none; font-size: 0.82rem; }
+  .task-list li { padding: 0.25rem 0; }
+  .task-list .done { color: var(--green); }
+  .task-list .pending { color: var(--text-muted); }
+  .task-list .done::before { content: "\2713  "; }
+  .task-list .pending::before { content: "\25CB  "; }
+
+  /* ── Split Row ── */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+
+  /* ── Baseline Card ── */
+  .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  .metric-section h4 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.6rem; }
+  .metric-table { width: 100%; font-size: 0.82rem; }
+  .metric-table td { padding: 0.3rem 0; border-bottom: 1px solid rgba(48,54,61,0.4); }
+  .metric-table td:first-child { color: var(--text-muted); width: 45%; }
+  .metric-table td:last-child { font-family: var(--mono); }
+  .highlight { font-size: 1.4rem; font-weight: 700; font-family: var(--mono); }
+  .highlight-green { color: var(--green); }
+  .highlight-muted { color: var(--text-muted); font-size: 0.8rem; }
+  .bpb-scale { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .bpb-scale-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem; }
+  .bpb-bar { position: relative; height: 28px; background: rgba(48,54,61,0.4); border-radius: 6px; overflow: visible; }
+  .bpb-marker {
+    position: absolute; top: -2px; width: 3px; height: 32px; border-radius: 2px;
+    transform: translateX(-50%);
+  }
+  .bpb-marker-label {
+    position: absolute; top: 34px; transform: translateX(-50%); font-size: 0.65rem;
+    font-family: var(--mono); white-space: nowrap;
+  }
+
+  /* ── Decisions ── */
+  .decision {
+    padding: 0.85rem; border-radius: 8px; background: var(--bg);
+    border-left: 3px solid var(--red); margin-bottom: 0.6rem;
+  }
+  .decision:last-child { margin-bottom: 0; }
+  .decision-num { font-size: 0.7rem; font-weight: 700; color: var(--red); font-family: var(--mono); }
+  .decision-q { font-size: 0.85rem; font-weight: 600; margin: 0.2rem 0; }
+  .decision-ctx { font-size: 0.78rem; color: var(--text-muted); }
+
+  /* ── Timeline (Gantt) ── */
+  .gantt { overflow-x: auto; }
+  .gantt-grid {
+    display: grid;
+    grid-template-columns: 160px repeat(16, 1fr);
+    gap: 0;
+    min-width: 800px;
+  }
+  .gantt-header {
+    font-size: 0.65rem; color: var(--text-muted); text-align: center;
+    padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-family: var(--mono);
+  }
+  .gantt-label {
+    font-size: 0.8rem; padding: 0.6rem 0.5rem 0.6rem 0;
+    border-bottom: 1px solid rgba(48,54,61,0.3); display: flex; align-items: center;
+  }
+  .gantt-cell {
+    border-bottom: 1px solid rgba(48,54,61,0.3);
+    border-left: 1px solid rgba(48,54,61,0.15);
+    position: relative; min-height: 36px;
+  }
+  .gantt-bar {
+    position: absolute; top: 6px; bottom: 6px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65rem; font-weight: 600; font-family: var(--mono); color: #fff;
+    left: 4px; right: 4px;
+  }
+  .gantt-bar-next { background: linear-gradient(90deg, #238636, var(--green)); }
+  .gantt-bar-blocked { background: linear-gradient(90deg, rgba(248,81,73,0.3), rgba(248,81,73,0.5)); border: 1px solid rgba(248,81,73,0.4); color: var(--red); }
+  .gantt-today {
+    position: absolute; top: 0; bottom: 0; width: 2px; background: var(--red);
+    z-index: 5; pointer-events: none;
+  }
+  .gantt-today-label {
+    position: absolute; top: -18px; transform: translateX(-50%);
+    font-size: 0.6rem; color: var(--red); font-family: var(--mono); white-space: nowrap;
+  }
+  .critical-path {
+    margin-top: 1rem; padding: 0.75rem; border-radius: 6px; background: var(--bg);
+    font-size: 0.82rem; font-family: var(--mono); color: var(--text-muted); text-align: center;
+  }
+  .critical-path span { color: var(--text); }
+
+  /* ── Gap ── */
+  .gap-rows { display: grid; gap: 0.75rem; }
+  .gap-row { display: grid; grid-template-columns: 120px 1fr 50px; align-items: center; gap: 1rem; }
+  .gap-label { font-size: 0.88rem; font-weight: 600; }
+  .gap-track { height: 32px; background: rgba(48,54,61,0.4); border-radius: 6px; overflow: hidden; }
+  .gap-fill { height: 100%; border-radius: 6px; display: flex; align-items: center; padding-left: 0.75rem; font-size: 0.75rem; font-weight: 600; }
+  .gap-fill.green { background: linear-gradient(90deg, #238636, var(--green)); color: #fff; }
+  .gap-fill.red { background: linear-gradient(90deg, #b62324, var(--red)); color: #fff; }
+  .gap-pct { font-family: var(--mono); font-size: 0.85rem; color: var(--text-muted); text-align: right; }
+  .gap-takeaways { margin-top: 1rem; padding: 1rem; border-radius: 6px; background: var(--bg); }
+  .gap-takeaways li { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; list-style: none; padding-left: 1.2rem; position: relative; }
+  .gap-takeaways li::before { content: "\26A0"; position: absolute; left: 0; color: var(--yellow); }
+
+  /* ── Footer ── */
+  footer { text-align: center; padding: 2rem; font-size: 0.75rem; color: var(--text-muted); }
+  footer a { color: var(--blue); text-decoration: none; }
+
+  /* ── Responsive ── */
+  @media (max-width: 1199px) {
+    .tracks, .split, .metric-grid { grid-template-columns: 1fr; }
+    .phases { flex-direction: column; }
+    .phase-arrow { transform: rotate(90deg); width: 100%; height: 32px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════ HEADER ════════ -->
+<header>
+  <div class="header-left">
+    <h1>DL Team Proposal &mdash; Project Dashboard</h1>
+    <p>nanochat LLM training &bull; learning curve comparison</p>
+  </div>
+  <div class="pills">
+    <span class="pill pill-red" id="days-pill"></span>
+    <span class="pill pill-blue">1 run completed</span>
+    <span class="pill pill-green">val_bpb 1.160</span>
+    <span class="pill pill-yellow">CORE 0.036</span>
+  </div>
+</header>
+
+<main>
+
+<!-- ════════ TWO-TRACK OVERVIEW ════════ -->
+<section class="card">
+  <div class="card-title">Two Parallel Tracks</div>
+  <div class="tracks">
+    <div class="track track-course">
+      <h3>Course Project <span class="badge badge-orange">CS 7643</span></h3>
+      <ul class="track-items">
+        <li>Proposal (Gradescope) <span class="status status-draft">DRAFTED</span></li>
+        <li>Final Paper (Overleaf) <span class="status status-tbd">TBD</span></li>
+        <li>Learning Curves <span class="status status-tbd">TBD</span></li>
+        <li>Analysis &amp; Writeup <span class="status status-tbd">TBD</span></li>
+      </ul>
+      <p class="track-meta">Deadline: <strong>TBD (end of semester)</strong></p>
+    </div>
+    <div class="track track-pgolf">
+      <h3>Parameter Golf <span class="badge badge-purple">OpenAI</span></h3>
+      <div class="constraint-chips">
+        <span class="chip">16 MB artifact</span>
+        <span class="chip">10 min / 8&times;H100</span>
+        <span class="chip">1024 vocab</span>
+      </div>
+      <ul class="track-items">
+        <li>Target <span class="status" style="background:rgba(188,140,255,0.15);color:var(--purple);">&lt; 1.2244 BPB</span></li>
+        <li>Current best <span class="status status-draft">1.160 (non-compliant)</span></li>
+        <li>Prize <span class="status" style="background:rgba(88,166,255,0.1);color:var(--blue);">$1M RunPod</span></li>
+      </ul>
+      <p class="track-meta">Deadline: <strong style="color:var(--red);">April 30, 2026</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ PROGRESS BARS ════════ -->
+<section class="card">
+  <div class="card-title">Workstream Progress</div>
+
+  <div class="progress-row">
+    <span class="progress-label">Research Notes</span>
+    <div class="progress-track"><div class="progress-fill green" style="width:95%"></div></div>
+    <span class="progress-pct">95%</span>
+    <div class="tooltip-text">12/12 notes written. Only minor updates remain.</div>
+  </div>
+
+  <div class="progress-row">
+    <span class="progress-label">Proposal</span>
+    <div class="progress-track"><div class="progress-fill yellow" style="width:20%"></div></div>
+    <span class="progress-pct">20%</span>
+    <div class="tooltip-text">Approach drafted (notes 10-11). Official proposal-draft.md = all TBD.</div>
+  </div>
+
+  <div class="progress-row">
+    <span class="progress-label">Training Plan</span>
+    <div class="progress-track"><div class="progress-fill red" style="width:0%"></div></div>
+    <span class="progress-pct">0%</span>
+    <div class="tooltip-text">All 4 stages (pretrain, SFT, RLHF, chat) are TBD.</div>
+  </div>
+
+  <div class="progress-row">
+    <span class="progress-label">Experiments</span>
+    <div class="progress-track"><div class="progress-fill red" style="width:5%"></div></div>
+    <span class="progress-pct">5%</span>
+    <div class="tooltip-text">Baseline logged. experiments.md rows are all TBD.</div>
+  </div>
+
+  <div class="progress-row">
+    <span class="progress-label">Training Runs</span>
+    <div class="progress-track"><div class="progress-fill red" style="width:10%"></div></div>
+    <span class="progress-pct">10%</span>
+    <div class="tooltip-text">1 run completed: d=3 baseline. Depth sweep not started.</div>
+  </div>
+
+  <div class="progress-row">
+    <span class="progress-label">Findings</span>
+    <div class="progress-track"><div class="progress-fill red" style="width:0%"></div></div>
+    <span class="progress-pct">0%</span>
+    <div class="tooltip-text">findings.md is entirely TBD.</div>
+  </div>
+
+  <div class="progress-row">
+    <span class="progress-label">PGolf Submission</span>
+    <div class="progress-track"><div class="progress-fill red" style="width:0%"></div></div>
+    <span class="progress-pct">0%</span>
+    <div class="tooltip-text">No submission artifact exists yet.</div>
+  </div>
+</section>
+
+<!-- ════════ PHASE FLOW ════════ -->
+<section class="card">
+  <div class="card-title">Implementation Phases</div>
+  <div class="phases">
+    <div class="phase-box partial">
+      <div class="phase-header">
+        <h3>Phase 1: Adapt</h3>
+        <span class="phase-status partial-s">Partial</span>
+      </div>
+      <ul class="task-list">
+        <li class="done">Fork nanochat</li>
+        <li class="done">Train d=3 baseline</li>
+        <li class="done">Log baseline learning curves</li>
+        <li class="pending">Adapt tokenizer for PGolf (1024 vocab)</li>
+        <li class="pending">Adapt data loader for PGolf shards</li>
+        <li class="pending">Fit model within 16 MB budget</li>
+      </ul>
+    </div>
+
+    <div class="phase-arrow">&rarr;</div>
+
+    <div class="phase-box not-started">
+      <div class="phase-header">
+        <h3>Phase 2: Experiments</h3>
+        <span class="phase-status blocked-s">Not Started</span>
+      </div>
+      <ul class="task-list">
+        <li class="pending">Architectural mods (gated attention)</li>
+        <li class="pending">Data &amp; hyperparameter variations</li>
+        <li class="pending">Post-training (SFT / GRPO RL)</li>
+      </ul>
+      <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">3 members &rarr; 3 parallel tracks</p>
+    </div>
+
+    <div class="phase-arrow">&rarr;</div>
+
+    <div class="phase-box not-started">
+      <div class="phase-header">
+        <h3>Phase 3: Integrate</h3>
+        <span class="phase-status blocked-s">Not Started</span>
+      </div>
+      <ul class="task-list">
+        <li class="pending">Combine winning techniques</li>
+        <li class="pending">Package PGolf submission</li>
+        <li class="pending">Write final paper analysis</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ SPLIT: BASELINE + DECISIONS ════════ -->
+<div class="split">
+  <!-- Baseline Results -->
+  <section class="card">
+    <div class="card-title">Baseline Run &mdash; d=3 (Apr 13, 2026)</div>
+    <div class="metric-grid">
+      <div class="metric-section">
+        <h4>Model Config</h4>
+        <table class="metric-table">
+          <tr><td>Depth</td><td>3</td></tr>
+          <tr><td>Parameters</td><td>36M</td></tr>
+          <tr><td>Layers</td><td>3</td></tr>
+          <tr><td>Embed dim</td><td>256</td></tr>
+          <tr><td>Heads</td><td>2 / 2 KV</td></tr>
+          <tr><td>Vocab</td><td>32,768</td></tr>
+          <tr><td>Seq length</td><td>2,048</td></tr>
+        </table>
+      </div>
+      <div class="metric-section">
+        <h4>Performance</h4>
+        <div style="margin-bottom:0.75rem;">
+          <div class="highlight highlight-green">1.160 <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">val_bpb</span></div>
+          <div class="highlight-muted">CORE: 0.036 &nbsp;(GPT-2 ref: 0.2565)</div>
+        </div>
+        <table class="metric-table">
+          <tr><td>Train time</td><td>30s compute</td></tr>
+          <tr><td>Wall time</td><td>~2 min</td></tr>
+          <tr><td>Cost</td><td>~$24 (incl. setup)</td></tr>
+          <tr><td>MFU</td><td>4.7%</td></tr>
+          <tr><td>Peak VRAM</td><td>4.8 GB / GPU</td></tr>
+          <tr><td>Tokens</td><td>128.9M</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="bpb-scale">
+      <div class="bpb-scale-label">BPB Scale (lower = better)</div>
+      <div class="bpb-bar" id="bpb-bar">
+        <!-- markers placed by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- Blocking Decisions -->
+  <section class="card">
+    <div class="card-title">Blocking Decisions (5 open)</div>
+
+    <div class="decision">
+      <div class="decision-num">#1</div>
+      <div class="decision-q">Adapt to PGolf constraints or run nanochat as-is?</div>
+      <div class="decision-ctx">At 32K vocab, embeddings = 67 MB. Can't hit 16 MB without vocab shrink.</div>
+    </div>
+
+    <div class="decision">
+      <div class="decision-num">#2</div>
+      <div class="decision-q">Who does what? 3 experiment tracks need 3 members.</div>
+      <div class="decision-ctx">Arch mods, data/hyperparams, post-training &mdash; no assignments yet.</div>
+    </div>
+
+    <div class="decision">
+      <div class="decision-num">#3</div>
+      <div class="decision-q">Depth sweep range?</div>
+      <div class="decision-ctx">d=2,4,6 (fast, small) or higher? Approach says 9 layers / 512 dims.</div>
+    </div>
+
+    <div class="decision">
+      <div class="decision-num">#4</div>
+      <div class="decision-q">PGolf deadline Apr 30 vs course proposal &mdash; which ships first?</div>
+      <div class="decision-ctx">15 days left for PGolf. Course due date = TBD.</div>
+    </div>
+
+    <div class="decision">
+      <div class="decision-num">#5</div>
+      <div class="decision-q">Is the proposal already submitted?</div>
+      <div class="decision-ctx">Overleaf draft exists (notes 10-11). Official proposal-draft.md = all TBD.</div>
+    </div>
+  </section>
+</div>
+
+<!-- ════════ TIMELINE / GANTT ════════ -->
+<section class="card">
+  <div class="card-title">Critical Path &mdash; Apr 15 to Apr 30</div>
+  <div class="gantt">
+    <div class="gantt-grid" id="gantt">
+      <!-- Header row -->
+      <div class="gantt-header" style="text-align:left;padding-left:0.5rem;">Task</div>
+      <div class="gantt-header">15</div><div class="gantt-header">16</div>
+      <div class="gantt-header">17</div><div class="gantt-header">18</div>
+      <div class="gantt-header">19</div><div class="gantt-header">20</div>
+      <div class="gantt-header">21</div><div class="gantt-header">22</div>
+      <div class="gantt-header">23</div><div class="gantt-header">24</div>
+      <div class="gantt-header">25</div><div class="gantt-header">26</div>
+      <div class="gantt-header">27</div><div class="gantt-header">28</div>
+      <div class="gantt-header">29</div><div class="gantt-header">30</div>
+
+      <!-- Row 1: Depth sweep -->
+      <div class="gantt-label">Depth sweep</div>
+      <div class="gantt-cell" style="grid-column:2/5;"><div class="gantt-bar gantt-bar-next">d=2,4,6</div></div>
+      <div class="gantt-cell" style="grid-column:5/18;"></div>
+
+      <!-- Row 2: Vocab shrink -->
+      <div class="gantt-label">Vocab shrink</div>
+      <div class="gantt-cell" style="grid-column:2/3;"></div>
+      <div class="gantt-cell" style="grid-column:3/6;"><div class="gantt-bar gantt-bar-next">32K&rarr;1024</div></div>
+      <div class="gantt-cell" style="grid-column:6/18;"></div>
+
+      <!-- Row 3: SFT experiments -->
+      <div class="gantt-label">SFT on best</div>
+      <div class="gantt-cell" style="grid-column:2/6;"></div>
+      <div class="gantt-cell" style="grid-column:6/9;"><div class="gantt-bar gantt-bar-blocked">pre/post SFT</div></div>
+      <div class="gantt-cell" style="grid-column:9/18;"></div>
+
+      <!-- Row 4: Gated attention -->
+      <div class="gantt-label">Gated attention</div>
+      <div class="gantt-cell" style="grid-column:2/6;"></div>
+      <div class="gantt-cell" style="grid-column:6/11;"><div class="gantt-bar gantt-bar-blocked">arch mods</div></div>
+      <div class="gantt-cell" style="grid-column:11/18;"></div>
+
+      <!-- Row 5: Combine -->
+      <div class="gantt-label">Combine best</div>
+      <div class="gantt-cell" style="grid-column:2/11;"></div>
+      <div class="gantt-cell" style="grid-column:11/14;"><div class="gantt-bar gantt-bar-blocked">integrate</div></div>
+      <div class="gantt-cell" style="grid-column:14/18;"></div>
+
+      <!-- Row 6: Submit -->
+      <div class="gantt-label">Package &amp; submit</div>
+      <div class="gantt-cell" style="grid-column:2/14;"></div>
+      <div class="gantt-cell" style="grid-column:14/17;"><div class="gantt-bar gantt-bar-blocked">submit PR</div></div>
+    </div>
+  </div>
+  <div class="critical-path">
+    <span>Depth sweep</span> &rarr; <span>Vocab shrink</span> &rarr; <span>SFT</span> &rarr; <span>Gated attn</span> &rarr; <span>Combine</span> &rarr; <span>Submit</span>
+  </div>
+</section>
+
+<!-- ════════ GAP VISUALIZATION ════════ -->
+<section class="card">
+  <div class="card-title">Knowledge vs Execution Gap</div>
+  <div class="gap-rows">
+    <div class="gap-row">
+      <span class="gap-label">Knowledge</span>
+      <div class="gap-track"><div class="gap-fill green" style="width:85%">12 notes, approach drafted, Overleaf ready, GPU runbook</div></div>
+      <span class="gap-pct">85%</span>
+    </div>
+    <div class="gap-row">
+      <span class="gap-label">Execution</span>
+      <div class="gap-track"><div class="gap-fill red" style="width:8%"></div></div>
+      <span class="gap-pct">8%</span>
+    </div>
+  </div>
+  <ul class="gap-takeaways">
+    <li>Research is front-loaded. Execution has barely started.</li>
+    <li>All 5 blocking decisions are open. None can be deferred past Apr 20.</li>
+    <li>The team has written 50+ pages of notes but trained exactly 1 model.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  Generated <span id="gen-date"></span> &bull;
+  <a href="https://github.com/jamesEmerson112/DL-Team-Proposal">jamesEmerson112/DL-Team-Proposal</a>
+</footer>
+
+<script>
+  // ── Days-left counter ──
+  const deadline = new Date('2026-04-30T23:59:59');
+  const now = new Date();
+  const daysLeft = Math.max(0, Math.ceil((deadline - now) / 86400000));
+  document.getElementById('days-pill').textContent = daysLeft + ' days to PGolf deadline';
+
+  // ── Generated date ──
+  document.getElementById('gen-date').textContent = now.toLocaleDateString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric'
+  });
+
+  // ── BPB scale markers ──
+  (function() {
+    const bar = document.getElementById('bpb-bar');
+    const rangeMin = 0.6, rangeMax = 2.0;
+    const markers = [
+      { val: 0.75, label: 'GPT-2 (0.75)', color: '#58a6ff' },
+      { val: 1.160, label: 'Ours (1.160)', color: '#3fb950' },
+      { val: 1.2244, label: 'PGolf baseline (1.224)', color: '#bc8cff' },
+    ];
+    markers.forEach(function(m) {
+      var pct = ((m.val - rangeMin) / (rangeMax - rangeMin)) * 100;
+      pct = Math.max(2, Math.min(98, pct));
+      var marker = document.createElement('div');
+      marker.className = 'bpb-marker';
+      marker.style.left = pct + '%';
+      marker.style.background = m.color;
+      var label = document.createElement('div');
+      label.className = 'bpb-marker-label';
+      label.style.left = pct + '%';
+      label.style.color = m.color;
+      label.textContent = m.label;
+      bar.appendChild(marker);
+      bar.appendChild(label);
+    });
+  })();
+
+  // ── Gantt "today" line ──
+  (function() {
+    var gantt = document.getElementById('gantt');
+    var startDate = new Date('2026-04-15');
+    var dayIndex = Math.floor((now - startDate) / 86400000);
+    if (dayIndex >= 0 && dayIndex <= 15) {
+      var frac = (now - startDate) / 86400000;
+      // 17 columns: 1 label (160px) + 16 day cols
+      // position relative to gantt grid
+      var rect = gantt.getBoundingClientRect();
+      var labelWidth = 160;
+      var dayWidth = (rect.width - labelWidth) / 16;
+      var leftPx = labelWidth + (frac * dayWidth);
+      var todayLine = document.createElement('div');
+      todayLine.className = 'gantt-today';
+      todayLine.style.left = leftPx + 'px';
+      var todayLabel = document.createElement('div');
+      todayLabel.className = 'gantt-today-label';
+      todayLabel.textContent = 'TODAY';
+      todayLine.appendChild(todayLabel);
+      gantt.style.position = 'relative';
+      gantt.appendChild(todayLine);
+    }
+  })();
+</script>
+</body>
+</html>
