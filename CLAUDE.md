@@ -39,3 +39,15 @@ This is a **research-only repository** — no code implementation. Work products
 - Dashboard uses GitHub-dark theme, CSS Grid/Flexbox, JS for live countdown and BPB scale
 - [finding] Project has excellent research foundations but nearly zero execution artifacts — one baseline run (d=3) completed out of ~12+ planned experiments
 - [todo] Parameter Golf deadline is April 30, 2026
+
+### 2026-04-16 (Session 2)
+- Ran Parameter Golf baseline on RunPod pod (2x GPU auto-detected, intended 1 GPU)
+- Encountered disk quota exceeded error during FineWeb sp1024 dataset download — resolved by deleting HF cache after download (`rm -rf /workspace/.cache/huggingface/hub/datasets--willdepueoai--parameter-golf`)
+- Training result: val_bpb 1.3045 (baseline to beat: 1.2244, gap: +0.0801)
+- Model: 17M params, 9 layers, 512 dims, GQA, 1024 vocab
+- Completed 1,819/20,000 steps before hitting 10-min wall clock cap — model still improving
+- int8+zlib compressed model: 14.7 MB (under 16 MB budget), compression nearly lossless (+0.001 BPB)
+- Total cost: ~$2 for < 1 hour of pod time
+- Logged full run details to `docs/parameter-golf/findings.md` (Run 1 section)
+- Key insight: 8 GPUs should process ~4x more tokens in same 10-min window, likely beating 1.2244 baseline
+- [todo] Next run: use 8xH100 to maximize throughput within wall clock cap
