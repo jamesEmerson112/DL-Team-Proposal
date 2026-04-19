@@ -16,3 +16,11 @@ Read in order:
 | 10 | [Approach Draft](10_approach-draft.md) | Project proposal "Approach" section — phases, experiments, deliverables |
 | 11 | [Proposal Draft (Overleaf)](11_proposal-draft-overleaf.md) | LaTeX-ready Approach section with \cite{} references and new bibliography entries |
 | 12 | [Running nanochat with multiple GPUs](12_running-nanochat-with-multiple-gpus.md) | End-to-end guide for training nanochat on RunPod 8×H100 — setup, wandb, pipeline, gotchas, d=3 baseline results, next-steps playbook |
+
+## Meeting Notes
+
+Team meeting notes live in [`docs/meetings/`](../meetings/):
+
+| Date | File | Topics |
+|---|---|---|
+| 2026-04-16 | [2026-04-16.md](../meetings/2026-04-16.md) | NanoChat vs Parameter Golf alignment, BPB compression (3.91x), CLAUDE.md/SKILL.md explainer, scripts ready, 2-GPU baseline val_bpb 1.3045 |
