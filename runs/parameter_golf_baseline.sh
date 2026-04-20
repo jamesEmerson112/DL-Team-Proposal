@@ -27,11 +27,11 @@ RUN_ID="${RUN_ID:-baseline_sp1024}"          # wandb / logging run name
 TRAIN_SHARDS="${TRAIN_SHARDS:-}"            # empty = full dataset (80 shards)
 
 # -----------------------------------------------------------------------------
-# Locate parameter-golf repo (sibling to DL-Team-Proposal)
+# Locate parameter-golf repo (submodule in DL-Team-Proposal)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PG_DIR="$REPO_ROOT/../parameter-golf"
+PG_DIR="$REPO_ROOT/parameter-golf"
 
 # Clone if not present
 if [ ! -d "$PG_DIR" ]; then

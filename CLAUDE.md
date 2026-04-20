@@ -51,3 +51,13 @@ This is a **research-only repository** — no code implementation. Work products
 - Logged full run details to `docs/parameter-golf/findings.md` (Run 1 section)
 - Key insight: 8 GPUs should process ~4x more tokens in same 10-min window, likely beating 1.2244 baseline
 - [todo] Next run: use 8xH100 to maximize throughput within wall clock cap
+
+### 2026-04-19
+- [decision] Teammate raised concern that nanochat vs Parameter Golf integration is "impossible" — concluded it's hard but unnecessary; no need to fork nanochat's codebase
+- [decision] Chose Path A: use PG's pipeline directly (`train_gpt.py`), study nanochat's techniques (RoPE, RMSNorm, ReLU², Muon optimizer, GQA, depth-scaling), and port them one at a time into PG's code
+- [research] PG submission process: fork repo → add folder under `records/track_10min_16mb/` → PR back to `openai/parameter-golf`. 28 record submissions exist, current SOTA is 1.0810 BPB (baseline 1.2244)
+- [feat] Installed GitHub CLI (`gh`) on Windows, authenticated as `jamesEmerson112`
+- [feat] Forked `openai/parameter-golf` → `github.com/jamesEmerson112/parameter-golf`
+- [feat] Cloned fork to `C:\Users\voan2\Documents\GitHub\parameter-golf` (sibling to DL-Team-Proposal)
+- Confirmed `runs/parameter_golf_baseline.sh` auto-discovers the sibling `parameter-golf/` directory — no script updates needed
+- Experiment workflow confirmed: edit `train_gpt.py` → run with `torchrun` → read `val_bpb` from output → compare to baseline (1.2244) and SOTA (1.0810)

@@ -5,7 +5,12 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:openai.com)",
       "WebFetch(domain:blog.neurips.cc)",
-      "WebFetch(domain:deepwiki.com)"
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(curl -s https://raw.githubusercontent.com/openai/parameter-golf/main/README.md)",
+      "Bash(curl -s https://api.github.com/repos/openai/parameter-golf/contents/)",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f{item[''''type'''']:4s} {item[''''name'''']}\\) for item in data]\")",
+      "Bash(curl -s https://api.github.com/repos/openai/parameter-golf/contents/records/track_10min_16mb)",
+      "Bash(curl:*)"
     ]
   }
 }
