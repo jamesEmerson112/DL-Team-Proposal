@@ -1,3 +1,0 @@
-[submodule "nanochat"]
-	path = nanochat
-	url = https://github.com/karpathy/nanochat.git
