@@ -5,6 +5,7 @@ cd parameter-golf
 pip install -r requirements.txt
 pip install huggingface_hub
 pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
 # Download SP8192 dataset (~5-10 min)
 rm -f data/manifest.json
