@@ -206,22 +206,28 @@ run_id = '${RUN_ID}'
 params = find(r'model_params:(\d+)')
 heads = find(r'num_heads:(\d+)')
 kv_heads = find(r'num_kv_heads:(\d+)')
-step_avg = find(r'step_avg:([\d.]+)ms')
+# Use last step_avg (first one is 0.01ms from step 0)
+step_avgs = re.findall(r'step_avg:([\d.]+)ms', text)
+step_avg = step_avgs[-1] if step_avgs else '?'
 vram = find(r'peak memory allocated: (\d+) MiB')
 gated = os.environ.get('GATED_ATTN', 'none')
 activation = os.environ.get('ACTIVATION', 'relu2')
 qk_gain = os.environ.get('QK_GAIN_INIT', '1.5')
 ngpus = '${NGPUS}'
 
-# Find last val_bpb and final int8 roundtrip
-val_bpbs = re.findall(r'val_bpb:([\d.]+)', text)
-last_raw_bpb = val_bpbs[-1] if val_bpbs else '?'
+# Find last val_loss/val_bpb from TRAINING (exclude roundtrip lines)
+# Training lines look like: step:3500/20000 val_loss:2.1338 val_bpb:1.2638
+# Roundtrip lines look like: final_int8_zlib_roundtrip val_loss:...
+train_vals = re.findall(r'^step:\d+/\d+ val_loss:([\d.]+) val_bpb:([\d.]+)', text, re.MULTILINE)
+last_raw_loss = train_vals[-1][0] if train_vals else '?'
+last_raw_bpb = train_vals[-1][1] if train_vals else '?'
+int8_loss = find(r'final_int8_zlib_roundtrip_exact val_loss:([\d.]+)')
 int8_bpb = find(r'final_int8_zlib_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
 
-# Find last step
-steps = re.findall(r'step:(\d+)/\d+', text)
-last_step = steps[-1] if steps else '?'
-total_steps = find(r'step:\d+/(\d+)')
+# Find last step (use ^step: to exclude warmup_step: lines)
+steps = re.findall(r'^step:(\d+)/(\d+)', text, re.MULTILINE)
+last_step = steps[-1][0] if steps else '?'
+total_steps = steps[-1][1] if steps else '?'
 
 # Find compressed size
 comp_bytes = find(r'Serialized model int8\+zlib: (\d+) bytes')
@@ -238,7 +244,9 @@ print(f'  qk_gain_init: {qk_gain}')
 print(f'  steps:        {last_step}/{total_steps}')
 print(f'  step_avg:     {step_avg} ms')
 print(f'  peak_vram:    {vram} MiB')
+print(f'  val_loss_raw: {last_raw_loss}')
 print(f'  val_bpb_raw:  {last_raw_bpb}')
+print(f'  val_loss_int8:{int8_loss}')
 print(f'  val_bpb_int8: {int8_bpb}')
 print(f'  size_int8:    {comp_mb} MB')
 print(f'  under_budget: {budget_ok}')

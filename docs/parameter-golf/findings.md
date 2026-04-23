@@ -19,7 +19,8 @@
 | Warmup steps | 20 |
 | Steps completed | 1,819 / 20,000 (hit 10-min wall clock cap) |
 | Peak VRAM | 10,286 MiB |
-| **val_bpb** | **1.3045** |
+| **val_loss (int8+zlib)** | **2.2027** (computed) |
+| **val_bpb (int8+zlib)** | **1.3045** |
 | Baseline to beat | 1.2244 |
 | Gap | +0.0801 (need to go lower) |
 | Model size (raw) | 67.2 MB |
@@ -53,7 +54,9 @@
 | Steps completed | 3,287 / 20,000 (hit 10-min wall clock cap) |
 | Peak VRAM | 10,374 MiB |
 | Step avg | 182.54 ms |
+| **val_loss (raw)** | **2.1320** (computed) |
 | **val_bpb (raw)** | **1.2626** |
+| **val_loss (int8+zlib)** | **2.1366** (computed) |
 | **val_bpb (int8+zlib)** | **1.2653** |
 | Baseline to beat | 1.2244 |
 | Gap | +0.0409 (down from +0.0801 in Run 1) |
@@ -95,7 +98,9 @@
 | Steps completed | 3,129 / 20,000 (hit 10-min wall clock cap) |
 | Peak VRAM | 11,518 MiB |
 | Step avg | 191.75 ms |
+| **val_loss (raw)** | **2.1241** (computed) |
 | **val_bpb (raw)** | **1.2579** |
+| **val_loss (int8+zlib)** | **2.1280** (computed) |
 | **val_bpb (int8+zlib)** | **1.2602** |
 | Baseline to beat | 1.2244 |
 | Gap | +0.0358 |
@@ -148,7 +153,9 @@
 | Steps completed | 3,370 / 20,000 (hit 10-min wall clock cap) |
 | Peak VRAM | 10,710 MiB |
 | Step avg | 178.03 ms |
+| **val_loss (raw)** | **2.1503** (computed) |
 | **val_bpb (raw)** | **1.2734** |
+| **val_loss (int8+zlib)** | **2.1549** (computed) |
 | **val_bpb (int8+zlib)** | **1.2761** |
 | Baseline to beat | 1.2244 |
 | Gap | +0.0517 |
@@ -172,11 +179,11 @@
 
 ### All Runs on PyTorch 2.11 Pod — Comparison
 
-| Run | Technique | KV Heads | val_bpb | Steps | Size (int8+zlib) | Under 16 MB? |
-|-----|-----------|----------|---------|-------|-------------------|-------------|
-| 2 | Gated Attn (headwise) | 4 (GQA) | **1.2653** | 3,287 | **15.75 MB** | **Yes** |
-| 3 | Gated Attn (elementwise) | 4 (GQA) | 1.2602 | 3,129 | 17.87 MB | No |
-| 4 | MQA | 1 (MQA) | 1.2761 | 3,370 | 16.84 MB | No |
+| Run | Technique | KV Heads | val_loss | val_bpb | Steps | Size (int8+zlib) | Under 16 MB? |
+|-----|-----------|----------|----------|---------|-------|-------------------|-------------|
+| 2 | Gated Attn (headwise) | 4 (GQA) | 2.1366 | **1.2653** | 3,287 | **15.75 MB** | **Yes** |
+| 3 | Gated Attn (elementwise) | 4 (GQA) | 2.1280 | 1.2602 | 3,129 | 17.87 MB | No |
+| 4 | MQA | 1 (MQA) | 2.1549 | 1.2761 | 3,370 | 16.84 MB | No |
 
 ### Run 5 — GQA baseline (intended), 2×H100 (2026-04-23)
 
@@ -194,7 +201,9 @@
 | Steps completed | 3,296 / 20,000 (hit 10-min wall clock cap) |
 | Peak VRAM | 11,518 MiB |
 | Step avg | 182.03 ms |
+| **val_loss (raw)** | **2.1191** |
 | **val_bpb (raw)** | **1.2550** |
+| **val_loss (int8+zlib)** | **2.1234** |
 | **val_bpb (int8+zlib)** | **1.2576** |
 | Baseline to beat | 1.2244 |
 | Gap | +0.0332 |
@@ -232,7 +241,9 @@
 | Steps completed | 3,500 / 20,000 (hit 10-min wall clock cap) |
 | Peak VRAM | 10,777 MiB |
 | Step avg | 171.41 ms |
+| **val_loss (raw)** | **2.1338** |
 | **val_bpb (raw)** | **1.2638** |
+| **val_loss (int8+zlib)** | **2.1388** |
 | **val_bpb (int8+zlib)** | **1.2667** |
 | Baseline to beat | 1.2244 |
 | Gap | +0.0423 |
@@ -257,14 +268,45 @@
 
 ### All Runs on PyTorch 2.11 Pod — Updated Comparison
 
-| Run | Technique | Params | val_bpb | Steps | Step avg | Size (int8+zlib) | Under 16 MB? |
-|-----|-----------|--------|---------|-------|----------|-------------------|-------------|
-| 6 | **Baseline (GQA)** | 17.06M | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
-| 2 | Gated Attn (headwise) | 17.10M | **1.2653** | 3,287 | 182ms | 15.75 MB | **Yes** |
-| 3 | Gated Attn (elementwise) | 19.42M | 1.2602 | 3,129 | 192ms | 17.87 MB | No |
-| 4 | MQA | 17.65M | 1.2761 | 3,370 | 178ms | 16.84 MB | No |
+| Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Under 16 MB? |
+|-----|-----------|--------|----------|---------|-------|----------|-------------------|-------------|
+| 6 | **Baseline (GQA)** | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
+| 2 | Gated Attn (headwise) | 17.10M | 2.1366 | **1.2653** | 3,287 | 182ms | 15.75 MB | **Yes** |
+| 3 | Gated Attn (elementwise) | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | No |
+| 4 | MQA | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | No |
 
 **Key finding:** Headwise gated attention improves BPB (1.2653 vs 1.2667 baseline) despite fewer steps (3,287 vs 3,500). The quality gain outweighs the speed cost. Elementwise has even better BPB but busts the budget.
+
+### Run 7 — LeakyReLU², 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | LeakyReLU(0.5)² activation (PG ranks 10-11) |
+| Model params | 17,059,912 (~17M) — no extra params (LeakyReLU has no learnable weights) |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,673 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 10,777 MiB |
+| Step avg | ~163 ms |
+| **val_loss (int8+zlib)** | **2.1344** |
+| **val_bpb (int8+zlib)** | **1.2641** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0397 |
+| Model size (int8+zlib) | **15.77 MB (under 16 MB budget)** |
+| Compression ratio | 3.91× |
+| PyTorch version | 2.11.0 |
+
+**Observations:**
+- LeakyReLU² gives **slightly better BPB than baseline** (1.2641 vs 1.2649 baseline_v2) — confirms leaderboard finding that it improves per-step quality
+- Same param count as baseline — activation change is free
+- Same step speed as baseline (~163 ms) — no throughput penalty
+- Under budget (15.77 MB)
+- Improvement is small (+0.0008 BPB) but consistent with ranks 10-11 using this technique
 
 ## Techniques That Worked
 
