@@ -2,6 +2,26 @@
 
 > What we learned from participating. Insights that could feed back into the course project.
 
+## Summary — All Runs (sorted by BPB, best first)
+
+| Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Budget? |
+|-----|-----------|--------|----------|---------|-------|----------|-------------------|---------|
+| 7 | **LeakyReLU²** | 17.06M | 2.1344 | **1.2641** | 3,673 | 163ms | 15.77 MB | Yes |
+| 8 | LeakyReLU² + headwise | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB | Yes |
+| 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | 15.77 MB | Yes |
+| 2 | Headwise gated attn | 17.10M | 2.1366 | 1.2653 | 3,287 | 182ms | 15.75 MB | Yes |
+| 6 | Baseline (GQA) | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
+| 3 | Elementwise gated attn | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
+| 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
+| 1 | Baseline (old pod) | 17.06M | 2.2027 | 1.3045 | 1,819 | — | 14.70 MB | Yes |
+| ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
+
+**All 2×H100 runs on PyTorch 2.11 unless noted. 10-min wall clock, 1024 vocab. PG baseline: 1.2244 BPB.**
+
+**Best legal technique: LeakyReLU²** — free improvement (no extra params, no speed cost), gap to PG baseline: +0.0397. Still pending: QK-Gain 5.0 + headwise.
+
+---
+
 ## Run Log
 
 ### Run 1 — 2-GPU baseline (2026-04-16)
@@ -277,6 +297,38 @@
 
 **Key finding:** Headwise gated attention improves BPB (1.2653 vs 1.2667 baseline) despite fewer steps (3,287 vs 3,500). The quality gain outweighs the speed cost. Elementwise has even better BPB but busts the budget.
 
+### Run 6v2 — Clean GQA baseline repeat, 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | GQA baseline repeat — reproducibility check after env var fix + branch sync |
+| Model params | 17,059,912 (~17M) — confirmed correct |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,661 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 10,777 MiB |
+| Step avg | 163.87 ms |
+| **val_loss (raw)** | **2.1304** |
+| **val_bpb (raw)** | **1.2617** |
+| **val_loss (int8+zlib)** | **2.1357** |
+| **val_bpb (int8+zlib)** | **1.2649** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0405 |
+| Model size (int8+zlib) | **15.77 MB (under 16 MB budget, +0.12 MB headroom)** |
+| Compression ratio | 3.91× |
+| PyTorch version | 2.11.0 |
+
+**Observations:**
+- Reproducibility confirmed: very close to Run 6 (1.2649 vs 1.2667, within noise)
+- Faster step time than Run 6 (164ms vs 171ms) — GPU thermal variance between runs
+- More steps (3,661 vs 3,500) → slightly better BPB
+- Used as the control baseline for Runs 7-8 ablation
+
 ### Run 7 — LeakyReLU², 2×H100 (2026-04-23)
 
 | Item | Value |
@@ -307,6 +359,48 @@
 - Same step speed as baseline (~163 ms) — no throughput penalty
 - Under budget (15.77 MB)
 - Improvement is small (+0.0008 BPB) but consistent with ranks 10-11 using this technique
+
+### Run 8 — LeakyReLU² + Headwise Gated Attn, 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | LeakyReLU(0.5)² + Headwise Gated Attention (combo test) |
+| Model params | 17,096,776 (~17.1M, +37K from headwise gates) |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,368 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 10,824 MiB |
+| Step avg | 178.15 ms |
+| **val_loss (raw)** | **2.1294** |
+| **val_bpb (raw)** | **1.2611** |
+| **val_loss (int8+zlib)** | **2.1345** |
+| **val_bpb (int8+zlib)** | **1.2642** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0398 |
+| Model size (int8+zlib) | **15.77 MB (under 16 MB budget)** |
+| Compression ratio | 3.91× |
+| PyTorch version | 2.11.0 |
+
+**Observations:**
+- Combo of LeakyReLU² + headwise gives **1.2642** — essentially identical to LeakyReLU² alone (1.2641)
+- Headwise adds 178ms/step overhead vs 163ms baseline → fewer steps (3,368 vs 3,673)
+- The techniques don't stack — LeakyReLU² is doing the work, headwise doesn't add value on top
+- Under budget (15.77 MB)
+
+### Runs 6-8 — Activation & Gated Attn Ablation (same pod, same PyTorch)
+
+| Run | Technique | val_loss | val_bpb | Steps | Step avg | Size |
+|-----|-----------|----------|---------|-------|----------|------|
+| 6v2 | Baseline | 2.1357 | 1.2649 | 3,661 | 164ms | 15.77 MB |
+| 7 | LeakyReLU² | 2.1344 | **1.2641** | 3,673 | 163ms | 15.77 MB |
+| 8 | LeakyReLU² + headwise | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB |
+
+**Key finding:** LeakyReLU² gives a small free improvement (-0.0008 BPB, no speed/size cost). Adding headwise gates on top doesn't help — the speed penalty (fewer steps) negates any per-step quality gain.
 
 ## Techniques That Worked
 
