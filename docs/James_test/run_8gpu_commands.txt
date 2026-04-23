@@ -15,5 +15,17 @@ cd ..
 source runs/configs/sp8192_combo_slim.env
 echo "VERIFY: GATED_ATTN=$GATED_ATTN VOCAB_SIZE=$VOCAB_SIZE ACTIVATION=$ACTIVATION MODEL_DIM=$MODEL_DIM TTT_MODE=$TTT_MODE"
 export NGPUS=8
-export RUN_ID=sp8192_combo_slim_8gpu
+
+# Seed 1 (default 1337)
+export RUN_ID=sp8192_combo_slim_seed1337
+bash runs/parameter_golf_baseline.sh
+
+# Seed 2
+export SEED=42
+export RUN_ID=sp8192_combo_slim_seed42
+bash runs/parameter_golf_baseline.sh
+
+# Seed 3
+export SEED=2025
+export RUN_ID=sp8192_combo_slim_seed2025
 bash runs/parameter_golf_baseline.sh
