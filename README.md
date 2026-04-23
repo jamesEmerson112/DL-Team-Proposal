@@ -44,3 +44,23 @@ We're participating in [OpenAI's Parameter Golf](https://github.com/openai/param
 - [Overview & Setup](docs/parameter-golf/00_overview.md)
 - [Experiments Tracker](docs/parameter-golf/experiments.md)
 - [Findings & Insights](docs/parameter-golf/findings.md)
+- [NeurIPS Paper Survey](docs/parameter-golf/neurips-paper-survey.md) — 18 papers with actionable techniques
+- [PG vs nanochat Architecture](docs/James_notes/13_pg-vs-nanochat-architecture.md)
+- [Compute Plan](docs/James_notes/compute-plan.md) — GPU access, cost estimates, cloud alternatives
+
+### Tools
+
+**Learning Curve Plotter** — parse Parameter Golf training logs and produce publication-ready charts.
+
+```bash
+# Single run (two subplots: train_loss + val_bpb)
+python tools/plot_curves.py logs/run1.txt --mode single
+
+# Compare multiple runs (overlay val_bpb curves)
+python tools/plot_curves.py logs/run1.txt logs/run2.txt --name "GQA" "MQA" --mode compare
+
+# Export to CSV for Overleaf
+python tools/plot_curves.py logs/*.txt --mode csv
+```
+
+Plots are saved to `docs/plots/`. Dark theme, PG Baseline (1.2244) and SOTA (1.0810) reference lines included.

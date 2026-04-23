@@ -69,6 +69,9 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
+    # Gated Attention (https://arxiv.org/abs/2505.06708, NeurIPS 2025 Best Paper)
+    # "none" = disabled (baseline), "headwise" = 1 gate per head, "elementwise" = 1 gate per dim
+    gated_attn = os.environ.get("GATED_ATTN", "none")
 
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
@@ -552,6 +555,76 @@ def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     return torch.cat((x1 * cos + x2 * sin, x1 * (-sin) + x2 * cos), dim=-1)
 
 
+# ╔═══════════════════════════════════════════════════════════════════════════════════╗
+# ║                     CAUSAL SELF-ATTENTION (with GQA)                              ║
+# ║                                                                                   ║
+# ║  Plain English: Each token asks "which earlier tokens should I pay attention to?" ║
+# ║  It computes a compatibility score (Q·K) with every previous token, then takes    ║
+# ║  a weighted average of their values (V). "Causal" = can only look backward.      ║
+# ║                                                                                   ║
+# ║  ┌──────────────── Input x: [batch, seq_len, 512] ────────────────┐               ║
+# ║  │                            │                                    │               ║
+# ║  │         ┌──────────────────┼──────────────────┐                 │               ║
+# ║  │         │                  │                  │                 │               ║
+# ║  │         ▼                  ▼                  ▼                 │               ║
+# ║  │    c_q (512→512)     c_k (512→256)      c_v (512→256)          │               ║
+# ║  │         │                  │                  │                 │               ║
+# ║  │         ▼                  ▼                  ▼                 │               ║
+# ║  │    Q: 8 heads × 64d  K: 4 heads × 64d  V: 4 heads × 64d      │               ║
+# ║  │         │                  │                                    │               ║
+# ║  │         ▼                  ▼                                    │               ║
+# ║  │    RMSNorm(Q)         RMSNorm(K)       ← stabilize magnitudes  │               ║
+# ║  │         │                  │                                    │               ║
+# ║  │         ▼                  ▼                                    │               ║
+# ║  │    RoPE(Q)            RoPE(K)           ← encode positions     │               ║
+# ║  │         │                                                       │               ║
+# ║  │         ▼                                                       │               ║
+# ║  │    Q × q_gain                           ← learnable sharpness  │               ║
+# ║  │         │                  │                  │                 │               ║
+# ║  │         └──────────────────┼──────────────────┘                 │               ║
+# ║  │                            ▼                                    │               ║
+# ║  │              scaled_dot_product_attention                       │               ║
+# ║  │              softmax(Q·Kᵀ / √64) · V                           │               ║
+# ║  │              (causal mask + FlashAttention + GQA)               │               ║
+# ║  │                            │                                    │               ║
+# ║  │                            ▼                                    │               ║
+# ║  │                     proj (512→512)                              │               ║
+# ║  │                            │                                    │               ║
+# ║  │                            ▼                                    │               ║
+# ║  │              Output: [batch, seq_len, 512]                      │               ║
+# ║  └─────────────────────────────────────────────────────────────────┘               ║
+# ║                                                                                   ║
+# ║  GROUPED QUERY ATTENTION (GQA) — why K,V have 4 heads but Q has 8:               ║
+# ║                                                                                   ║
+# ║    Standard (MHA, 8×8):           This model (GQA, 8×4):                          ║
+# ║    Q₀ → K₀  Q₄ → K₄              Q₀ ─┐                                          ║
+# ║    Q₁ → K₁  Q₅ → K₅              Q₁ ─┤→ K₀,V₀                                  ║
+# ║    Q₂ → K₂  Q₆ → K₆              Q₂ ─┐                                          ║
+# ║    Q₃ → K₃  Q₇ → K₇              Q₃ ─┤→ K₁,V₁                                  ║
+# ║    (8 KV pairs = full cost)        Q₄ ─┐                                          ║
+# ║                                    Q₅ ─┤→ K₂,V₂                                  ║
+# ║                                    Q₆ ─┐                                          ║
+# ║                                    Q₇ ─┤→ K₃,V₃                                  ║
+# ║                                    (4 KV pairs = 50% memory)                      ║
+# ║                                                                                   ║
+# ║  CAUSAL MASK (is_causal=True) — what makes this a language model:                 ║
+# ║                                                                                   ║
+# ║       attends to→  t₀  t₁  t₂  t₃  t₄                                           ║
+# ║    t₀              ✓   ✗   ✗   ✗   ✗     "The"  can only see itself              ║
+# ║    t₁              ✓   ✓   ✗   ✗   ✗     "cat"  sees "The cat"                   ║
+# ║    t₂              ✓   ✓   ✓   ✗   ✗     "sat"  sees "The cat sat"               ║
+# ║    t₃              ✓   ✓   ✓   ✓   ✗     "on"   sees "The cat sat on"            ║
+# ║    t₄              ✓   ✓   ✓   ✓   ✓     "the"  sees everything before it        ║
+# ║                                                                                   ║
+# ║    Each token predicts the NEXT token without peeking at the answer.              ║
+# ║                                                                                   ║
+# ║  WHY EACH STEP EXISTS:                                                            ║
+# ║  • RMSNorm on Q,K  → prevents attention scores from exploding to ±inf            ║
+# ║  • RoPE on Q,K     → encodes WHERE each token is (position 0, 1, 2...)           ║
+# ║  • q_gain (4.0-5.25) → learnable per-head sharpness (higher = more focused)      ║
+# ║  • √64 denominator → scales dot products so softmax doesn't saturate             ║
+# ║  • proj            → mixes info from all 8 heads back to 512 dimensions          ║
+# ╚═══════════════════════════════════════════════════════════════════════════════════╝
 class CausalSelfAttention(nn.Module):
     def __init__(
         self,
@@ -560,6 +633,7 @@ class CausalSelfAttention(nn.Module):
         num_kv_heads: int,
         rope_base: float,
         qk_gain_init: float,
+        gated_attn: str = "none",
     ):
         super().__init__()
         if dim % num_heads != 0:
@@ -568,29 +642,54 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("num_heads must be divisible by num_kv_heads")
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
-        self.head_dim = dim // num_heads
+        self.head_dim = dim // num_heads        # 512 / 8 = 64 dimensions per head
+        self.gated_attn = gated_attn
         if self.head_dim % 2 != 0:
             raise ValueError("head_dim must be even for RoPE")
-        kv_dim = self.num_kv_heads * self.head_dim
-        self.c_q = CastedLinear(dim, dim, bias=False)
-        self.c_k = CastedLinear(dim, kv_dim, bias=False)
-        self.c_v = CastedLinear(dim, kv_dim, bias=False)
-        self.proj = CastedLinear(dim, dim, bias=False)
-        self.proj._zero_init = True
+        kv_dim = self.num_kv_heads * self.head_dim  # 4 × 64 = 256 (half of Q's 512, GQA savings)
+        # Gated Attention (arxiv.org/abs/2505.06708, NeurIPS 2025 Best Paper):
+        # Widen Q projection to also produce gate logits from the same input.
+        #   "none"        → c_q: 512→512,  no gate
+        #   "headwise"    → c_q: 512→520,  +8 dims (1 gate scalar per head, ~9K extra params/layer)
+        #   "elementwise" → c_q: 512→1024, +512 dims (1 gate per dimension, doubles Q projection)
+        if gated_attn == "headwise":
+            self.gate_dim = num_heads           # 8 extra outputs
+        elif gated_attn == "elementwise":
+            self.gate_dim = dim                 # 512 extra outputs
+        else:
+            self.gate_dim = 0
+        self.c_q = CastedLinear(dim, dim + self.gate_dim, bias=False)  # Query + gate logits
+        self.c_k = CastedLinear(dim, kv_dim, bias=False)    # Key:   512→256 (only 4 KV heads)
+        self.c_v = CastedLinear(dim, kv_dim, bias=False)    # Value: 512→256 (only 4 KV heads)
+        self.proj = CastedLinear(dim, dim, bias=False)      # Output projection: 512→512
+        self.proj._zero_init = True                          # Start at zero so skip connections dominate early
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(self.head_dim, base=rope_base)
 
     def forward(self, x: Tensor) -> Tensor:
         bsz, seqlen, dim = x.shape
-        q = self.c_q(x).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
+        # Step 1: Project input → Q (+ gate logits if gated attention is enabled)
+        q_out = self.c_q(x)
+        if self.gate_dim > 0:
+            q_raw, gate_logits = q_out.split([dim, self.gate_dim], dim=-1)
+        else:
+            q_raw = q_out
+        # Reshape into multi-head format: [batch, heads, seq, head_dim]
+        q = q_raw.reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.c_v(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        # Step 2: Normalize Q and K so dot products don't explode
         q = F.rms_norm(q, (q.size(-1),))
         k = F.rms_norm(k, (k.size(-1),))
+        # Step 3: Apply rotary position embeddings — encode WHERE each token sits
         cos, sin = self.rotary(seqlen, x.device, q.dtype)
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
+        # Step 4: Scale Q by learnable per-head gain — controls attention sharpness
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
+        # Step 5: The actual attention — softmax(Q·Kᵀ/√d) · V with causal mask
+        #         Uses FlashAttention kernel under the hood (memory-efficient, no full NxN matrix)
+        #         enable_gqa=True tells PyTorch that K,V have fewer heads than Q
         y = F.scaled_dot_product_attention(
             q,
             k,
@@ -599,6 +698,20 @@ class CausalSelfAttention(nn.Module):
             is_causal=True,
             enable_gqa=(self.num_kv_heads != self.num_heads),
         )
+        # Step 6 (Gated Attention): sigmoid gate AFTER attention, BEFORE output projection
+        #   Gate logits come from the Q projection (query-dependent, input-dependent).
+        #   sigmoid(gate) ∈ [0,1] lets the model suppress uninformative heads/dims per token.
+        #   Headwise:    [bsz, seq, 8]   → [bsz, 8, seq, 1]   (one scalar per head)
+        #   Elementwise: [bsz, seq, 512] → [bsz, 8, seq, 64]  (one per dimension)
+        if self.gated_attn == "headwise":
+            gate = torch.sigmoid(gate_logits)                   # [bsz, seqlen, num_heads]
+            gate = gate.transpose(1, 2).unsqueeze(-1)           # [bsz, num_heads, seqlen, 1]
+            y = y * gate
+        elif self.gated_attn == "elementwise":
+            gate = torch.sigmoid(gate_logits)                   # [bsz, seqlen, dim]
+            gate = gate.reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
+            y = y * gate
+        # Step 7: Reshape from multi-head back to [batch, seq, 512] and project
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
         return self.proj(y)
 
@@ -626,11 +739,12 @@ class Block(nn.Module):
         mlp_mult: int,
         rope_base: float,
         qk_gain_init: float,
+        gated_attn: str = "none",
     ):
         super().__init__()
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
-        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init)
+        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init, gated_attn)
         self.mlp = MLP(dim, mlp_mult)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
@@ -659,6 +773,7 @@ class GPT(nn.Module):
         logit_softcap: float,
         rope_base: float,
         qk_gain_init: float,
+        gated_attn: str = "none",
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -680,6 +795,7 @@ class GPT(nn.Module):
                     mlp_mult,
                     rope_base,
                     qk_gain_init,
+                    gated_attn,
                 )
                 for i in range(num_layers)
             ]
@@ -835,6 +951,7 @@ def main() -> None:
         logit_softcap=args.logit_softcap,
         rope_base=args.rope_base,
         qk_gain_init=args.qk_gain_init,
+        gated_attn=args.gated_attn,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -843,31 +960,88 @@ def main() -> None:
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else compiled_model
 
-    # Optimizer split:
-    # - token embedding (Adam) uses EMBED_LR
-    # - untied lm_head (Adam) uses HEAD_LR
-    # - matrix params in transformer blocks use MATRIX_LR via Muon
-    # - vectors/scalars use SCALAR_LR via Adam
+    # =====================================================================
+    # OPTIMIZER SPLIT — Different param types get different optimizers & LRs
+    # =====================================================================
+    #
+    # The model's parameters are sorted into 3-4 groups, each with its own
+    # optimizer and learning rate. Think of it like a team where each role
+    # needs a different management style:
+    #
+    #   ┌─────────────────────────────────────────────────────────────────┐
+    #   │  Parameter Group        Optimizer   LR       % of Params       │
+    #   │  ─────────────────────  ─────────   ──────   ───────────       │
+    #   │  1. Embedding table     Adam        0.05     ~3%  (SP1024)     │
+    #   │     (tok_emb.weight)                         ~12% (SP8192)     │
+    #   │     "the dictionary"                                           │
+    #   │                                                                │
+    #   │  2. Matrix weights      MUON        0.04     ~95% of blocks    │
+    #   │     (Q, K, V, proj,                          The heavy lifters │
+    #   │      fc, mlp.proj)                           — 2D matrices     │
+    #   │     "attention + MLP                         that do the real  │
+    #   │      computation"                            learning          │
+    #   │                                                                │
+    #   │  3. Scalar params       Adam        0.04     <1%               │
+    #   │     (attn_scale,                             Tiny knobs that   │
+    #   │      mlp_scale,                              fine-tune how     │
+    #   │      resid_mix,                              blocks blend      │
+    #   │      q_gain,                                 their outputs     │
+    #   │      skip_weights)                                             │
+    #   │                                                                │
+    #   │  4. Output head         Adam        0.008    Only if untied    │
+    #   │     (lm_head.weight)                         embeddings        │
+    #   │     "vector → token                          (not used in      │
+    #   │      probability"                            baseline)         │
+    #   └─────────────────────────────────────────────────────────────────┘
+    #
+    # WHY MUON FOR MATRICES?
+    #   Muon orthogonalizes gradient updates via Newton-Schulz iterations.
+    #   This only works on 2D matrices (needs rows & columns to orthogonalize).
+    #   1D vectors and scalars are too small — they use standard Adam instead.
+    #
+    # WHY DIFFERENT LEARNING RATES?
+    #   - Embeddings are a lookup table — aggressive updates cause instability
+    #   - Matrix weights are the core compute — Muon handles the LR scaling
+    #   - Scalars are sensitive knobs — moderate LR with Adam's adaptive step
+    #   - Output head (if untied) maps back to vocab — needs gentler updates
+    #
     block_named_params = list(base_model.blocks.named_parameters())
+
+    # --- Group 2: Matrix params (2D tensors in transformer blocks) → Muon ---
+    # Collects: c_q.weight, c_k.weight, c_v.weight, proj.weight, fc.weight, mlp.proj.weight
+    # Excludes: control tensors like attn_scale, resid_mix (those are 2D but act as scalars)
     matrix_params = [
         p
         for name, p in block_named_params
         if p.ndim == 2 and not any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
     ]
+
+    # --- Group 3: Scalar params (1D vectors + control tensors) → Adam ---
+    # Collects: attn_scale, mlp_scale, resid_mix, q_gain, skip_weights
+    # These are the small "knobs" that tune how blocks combine their outputs
     scalar_params = [
         p
         for name, p in block_named_params
         if p.ndim < 2 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)
     ]
     if base_model.skip_weights.numel() > 0:
-        scalar_params.append(base_model.skip_weights)
+        scalar_params.append(base_model.skip_weights)  # U-Net skip connection weights
+
+    # --- Group 1: Embedding table → Adam (gentle LR) ---
+    # The "dictionary" that maps token IDs to 512-dim vectors
+    # If tied: same weight used for input embedding AND output prediction (LR=0.05)
+    # If untied: separate input embedding (LR=0.6) and output head (LR=0.008)
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
     optimizer_tok = torch.optim.Adam(
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
-        fused=True,
+        fused=True,  # fused=True: single GPU kernel for speed
     )
+
+    # --- Group 2 optimizer: Muon for the heavy 2D matrices ---
+    # Uses Newton-Schulz orthogonalization (5 steps) to normalize gradients
+    # before applying them. This is the key innovation from modded-nanogpt.
     optimizer_muon = Muon(
         matrix_params,
         lr=args.matrix_lr,
@@ -875,14 +1049,22 @@ def main() -> None:
         backend_steps=args.muon_backend_steps,
     )
     for group in optimizer_muon.param_groups:
-        group["base_lr"] = args.matrix_lr
+        group["base_lr"] = args.matrix_lr  # Stash base LR for warmdown scheduling
+
+    # --- Group 3 optimizer: Adam for small scalar/vector params ---
     optimizer_scalar = torch.optim.Adam(
         [{"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}],
         betas=(args.beta1, args.beta2),
         eps=args.adam_eps,
         fused=True,
     )
+
+    # Collect all optimizers — training loop will step() all of them each iteration
     optimizers: list[torch.optim.Optimizer] = [optimizer_tok, optimizer_muon, optimizer_scalar]
+
+    # --- Group 4 (optional): Output head → Adam (only when embeddings are untied) ---
+    # In baseline, tie_embeddings=True so lm_head is None and this is skipped.
+    # When untied, the output head gets its own gentle LR (0.008)
     if base_model.lm_head is not None:
         optimizer_head = torch.optim.Adam(
             [{"params": [base_model.lm_head.weight], "lr": args.head_lr, "base_lr": args.head_lr}],
