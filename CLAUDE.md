@@ -82,3 +82,21 @@ This is a **research-only repository** — no code implementation. Work products
 - Marked headwise/elementwise gated attention as James Vo's original technique in findings
 - [finding] LeakyReLU² is the best legal technique: +0.0008 BPB over baseline, zero cost. Headwise alone is competitive but doesn't stack with LeakyReLU². Gap to PG baseline (1.2244) still +0.0397.
 - [todo] Run headwise_qkgain5.env — could be a big mover based on leaderboard
+
+### 2026-04-23 (Session 4)
+- [research] Searched 10 topic areas beyond existing 18-paper NeurIPS survey to find new techniques for Parameter Golf (17M param GPT, 16MB, 10min 8xH100)
+- Found 12 new applicable techniques; expanded `docs/parameter-golf/neurips-paper-survey.md` from 18 to 29 papers
+- Merged `docs/parameter-golf/paper-survey.md` into `docs/parameter-golf/neurips-paper-survey.md` (deleted duplicate)
+- Added "PG Leaderboard" column to all 29 papers indicating which are proven on the competition leaderboard
+- Expanded Top 5 actionable techniques to Top 8, added "Leaderboard-Proven Techniques" section (7 paper-backed + 8 competition techniques)
+- Added "Papers Blocked/Low Priority" section for techniques that don't fit PG constraints
+- Key new papers found:
+  - Value Residual Learning / ResFormer (ACL 2025) — 16% fewer params equivalent, on leaderboard rank 8
+  - Differential Attention (ICLR 2025 Oral) — two-softmax-subtract attention, noise cancellation
+  - HybridNorm (NeurIPS 2025) / Peri-LN (ICML 2025) — better norm placement, zero extra params
+  - Schedule-Free Optimizer (NeurIPS 2024 Oral) — no LR schedule needed, ideal for fixed wall clock
+  - Early Weight Averaging (COLM 2024) — proven on PG leaderboard ranks 7,12,13,14
+  - FlashAttention-3 (NeurIPS 2024) — proven on leaderboard rank 15, 1.5-2x over FA2 on H100
+  - Exclusive Self-Attention / XSA (arXiv 2026) — proven on leaderboard ranks 8,10,14,15
+- [finding] PG SOTA updated: current best is ~1.028 BPB (down from 1.081 previously noted); top submissions now use LoRA TTT, cross-sequence attention, and pre-quantization TTT
+- [todo] Prioritize leaderboard-proven techniques for next runs: EWA, FlashAttention-3, XSA, Value Residual Learning
