@@ -18,7 +18,9 @@
 
 **All 2×H100 runs on PyTorch 2.11 unless noted. 10-min wall clock, 1024 vocab. PG baseline: 1.2244 BPB.**
 
-**Best legal technique: LeakyReLU²** — free improvement (no extra params, no speed cost), gap to PG baseline: +0.0397. Still pending: QK-Gain 5.0 + headwise.
+**Best legal technique: LeakyReLU²** — free improvement (no extra params, no speed cost), gap to PG baseline: +0.0397.
+
+**TODO:** Run `headwise_qkgain5.env` — QK-Gain 5.0 + headwise gated attn. PG ranks 1-6 all use QK-Gain 5.0-5.25 (up from default 1.5). Config ready, missed due to line-break paste error on pod. Command: `source runs/configs/headwise_qkgain5.env && export NGPUS=2 && bash runs/parameter_golf_baseline.sh`
 
 *\* Original technique by James Vo — gated attention applied post-SDPA with sigmoid gates, inspired by NeurIPS 2025 Best Paper (arxiv.org/abs/2505.06708).*
 
