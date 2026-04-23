@@ -468,6 +468,7 @@ _High-level takeaways that apply beyond the competition._
 1. 2 GPUs got to val_bpb 1.30 in 10 min — 8 GPUs should process ~4× more tokens in the same window, likely pushing below 1.22
 2. Model still improving at wall clock cutoff — not converged, more throughput = better score
 3. int8+zlib compression is essentially free (1.3033 → 1.3045, only +0.001 BPB degradation)
+4. SP8192 dataset is NOT in the official PG repo (`willdepueoai/parameter-golf`). It's hosted on Kevin Clark's fork: `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80`. All top 5 submissions (ranks 1-5) use this source.
 
 ## On Metric Choice & Goodhart's Law
 
