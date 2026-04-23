@@ -179,5 +179,72 @@ print()
 print(f'  Baseline to beat:    1.2244 BPB')
 "
 
+# -----------------------------------------------------------------------------
+# Compact summary — paste this block to log the run
+
+echo ""
+echo "============================================"
+echo "  COPY-PASTE SUMMARY"
+echo "============================================"
+python3 -c "
+import os, re
+
+log_file = 'logs/${RUN_ID}.txt'
+if not os.path.isfile(log_file):
+    print('  (log file not found)')
+    exit()
+
+lines = open(log_file).readlines()
+text = ''.join(lines)
+
+# Extract key fields from log
+def find(pattern, default='?'):
+    m = re.search(pattern, text)
+    return m.group(1) if m else default
+
+run_id = '${RUN_ID}'
+params = find(r'model_params:(\d+)')
+heads = find(r'num_heads:(\d+)')
+kv_heads = find(r'num_kv_heads:(\d+)')
+step_avg = find(r'step_avg:([\d.]+)ms')
+vram = find(r'peak memory allocated: (\d+) MiB')
+gated = os.environ.get('GATED_ATTN', 'none')
+activation = os.environ.get('ACTIVATION', 'relu2')
+qk_gain = os.environ.get('QK_GAIN_INIT', '1.5')
+ngpus = '${NGPUS}'
+
+# Find last val_bpb and final int8 roundtrip
+val_bpbs = re.findall(r'val_bpb:([\d.]+)', text)
+last_raw_bpb = val_bpbs[-1] if val_bpbs else '?'
+int8_bpb = find(r'final_int8_zlib_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+
+# Find last step
+steps = re.findall(r'step:(\d+)/\d+', text)
+last_step = steps[-1] if steps else '?'
+total_steps = find(r'step:\d+/(\d+)')
+
+# Find compressed size
+comp_bytes = find(r'Serialized model int8\+zlib: (\d+) bytes')
+comp_mb = f'{int(comp_bytes)/1e6:.2f}' if comp_bytes != '?' else '?'
+
+budget_ok = 'YES' if comp_bytes != '?' and int(comp_bytes) + 120000 <= 16_000_000 else 'NO'
+
+print(f'  run_id:       {run_id}')
+print(f'  gpus:         {ngpus}')
+print(f'  params:       {int(params):,}' if params != '?' else f'  params:       ?')
+print(f'  gated_attn:   {gated}')
+print(f'  activation:   {activation}')
+print(f'  qk_gain_init: {qk_gain}')
+print(f'  steps:        {last_step}/{total_steps}')
+print(f'  step_avg:     {step_avg} ms')
+print(f'  peak_vram:    {vram} MiB')
+print(f'  val_bpb_raw:  {last_raw_bpb}')
+print(f'  val_bpb_int8: {int8_bpb}')
+print(f'  size_int8:    {comp_mb} MB')
+print(f'  under_budget: {budget_ok}')
+print(f'  baseline:     1.2244')
+print(f'  gap:          +{float(int8_bpb) - 1.2244:.4f}' if int8_bpb != '?' else '  gap:          ?')
+"
+echo "============================================"
 echo ""
 echo "Done."

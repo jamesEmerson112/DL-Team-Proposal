@@ -216,6 +216,56 @@
 - Confirms elementwise model over 16 MB budget (17.96 MB)
 - **Root cause fix:** All env configs now explicitly set `GATED_ATTN=none` and `ACTIVATION=relu2` as defaults, so sourcing any config resets stale env vars. Clean baseline should have 17,059,912 params and ~14.7 MB compressed.
 
+### Run 6 — Clean GQA baseline, 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | GQA baseline (no gated attention, no activation change) — clean re-run after env var fix |
+| Model params | 17,059,912 (~17M) — confirmed correct |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,500 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 10,777 MiB |
+| Step avg | 171.41 ms |
+| **val_bpb (raw)** | **1.2638** |
+| **val_bpb (int8+zlib)** | **1.2667** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0423 |
+| Model size (raw) | 67.22 MB |
+| Model size (int8+zlib) | **15.75 MB (under 16 MB budget, +0.14 MB headroom)** |
+| Compression ratio | 3.91× |
+| PyTorch version | 2.11.0 |
+
+**Training curve:**
+- Step 0: val_bpb 4.1077
+- Step 1000: val_bpb 1.3830
+- Step 2000: val_bpb 1.3239
+- Step 3000: val_bpb 1.2812
+- Step 3500: val_bpb 1.2638 (still improving when time ran out)
+
+**Observations:**
+- Env var fix confirmed: 17,059,912 params (correct), not 19.4M
+- Budget check script now shows int8+zlib size — 15.75 MB, under budget with 0.14 MB headroom
+- More steps than Run 2 (3,500 vs 3,287) — no gate overhead means faster per step (171ms vs 182ms)
+- But worse BPB than Run 2 headwise (1.2667 vs 1.2653) despite more steps — confirms headwise gated attention genuinely helps quality
+- This is the proper control for isolating technique effects on this pod
+
+### All Runs on PyTorch 2.11 Pod — Updated Comparison
+
+| Run | Technique | Params | val_bpb | Steps | Step avg | Size (int8+zlib) | Under 16 MB? |
+|-----|-----------|--------|---------|-------|----------|-------------------|-------------|
+| 6 | **Baseline (GQA)** | 17.06M | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
+| 2 | Gated Attn (headwise) | 17.10M | **1.2653** | 3,287 | 182ms | 15.75 MB | **Yes** |
+| 3 | Gated Attn (elementwise) | 19.42M | 1.2602 | 3,129 | 192ms | 17.87 MB | No |
+| 4 | MQA | 17.65M | 1.2761 | 3,370 | 178ms | 16.84 MB | No |
+
+**Key finding:** Headwise gated attention improves BPB (1.2653 vs 1.2667 baseline) despite fewer steps (3,287 vs 3,500). The quality gain outweighs the speed cost. Elementwise has even better BPB but busts the budget.
+
 ## Techniques That Worked
 
 _Add entries as we discover things._

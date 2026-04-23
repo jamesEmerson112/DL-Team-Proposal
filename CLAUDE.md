@@ -61,3 +61,12 @@ This is a **research-only repository** — no code implementation. Work products
 - [feat] Cloned fork to `C:\Users\voan2\Documents\GitHub\parameter-golf` (sibling to DL-Team-Proposal)
 - Confirmed `runs/parameter_golf_baseline.sh` auto-discovers the sibling `parameter-golf/` directory — no script updates needed
 - Experiment workflow confirmed: edit `train_gpt.py` → run with `torchrun` → read `val_bpb` from output → compare to baseline (1.2244) and SOTA (1.0810)
+
+### 2026-04-23 (Session 3)
+- Implemented LeakyReLU² activation support in `parameter-golf/train_gpt.py`: added `ACTIVATION` env var (default "relu2", option "leaky_relu2" = LeakyReLU(0.5)²), threaded through MLP → Block → GPT → instantiation site
+- Created experiment configs: `runs/configs/leaky_relu2.env` and `runs/configs/leaky_relu2_headwise.env`
+- [bug] Caught critical stale env var bug: Run 5 (intended as clean GQA baseline) produced 19.4M params instead of 17M because shell had leftover `GATED_ATTN=elementwise` from a previous `source runs/configs/gated_attn_elementwise.env`. The gated attention code is correct (conditionally allocates gate dims), but env vars persist across runs in the same shell session.
+- [fix] Added explicit `GATED_ATTN=none` and `ACTIVATION=relu2` defaults to ALL env configs (explore_1gpu, explore_2gpu, competition_8gpu, smoke_test, gated_attn_elementwise, gated_attn_headwise, leaky_relu2, leaky_relu2_headwise) so sourcing any config always resets both toggles — prevents stale env var contamination
+- [fix] Updated budget check in `runs/parameter_golf_baseline.sh` to use int8+zlib compressed artifact size (`*.ptz`) instead of raw `.pt` files — matches actual PG submission format
+- Logged Run 5 in `docs/parameter-golf/findings.md` as INVALID (stale env var), noted root cause and fix
+- [insight] When using `source` to load env configs, variables persist in the shell — every config must explicitly set ALL experiment toggles, not just the ones it changes
