@@ -9,9 +9,9 @@
 | 7 | **LeakyReLU²** | 17.06M | 2.1344 | **1.2641** | 3,673 | 163ms | 15.77 MB | Yes |
 | 8 | LeakyReLU² + headwise | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB | Yes |
 | 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | 15.77 MB | Yes |
-| 2 | Headwise gated attn | 17.10M | 2.1366 | 1.2653 | 3,287 | 182ms | 15.75 MB | Yes |
+| 2 | Headwise gated attn* | 17.10M | 2.1366 | 1.2653 | 3,287 | 182ms | 15.75 MB | Yes |
 | 6 | Baseline (GQA) | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
-| 3 | Elementwise gated attn | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
+| 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
 | 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
 | 1 | Baseline (old pod) | 17.06M | 2.2027 | 1.3045 | 1,819 | — | 14.70 MB | Yes |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
@@ -19,6 +19,8 @@
 **All 2×H100 runs on PyTorch 2.11 unless noted. 10-min wall clock, 1024 vocab. PG baseline: 1.2244 BPB.**
 
 **Best legal technique: LeakyReLU²** — free improvement (no extra params, no speed cost), gap to PG baseline: +0.0397. Still pending: QK-Gain 5.0 + headwise.
+
+*\* Original technique by James Vo — gated attention applied post-SDPA with sigmoid gates, inspired by NeurIPS 2025 Best Paper (arxiv.org/abs/2505.06708).*
 
 ---
 
