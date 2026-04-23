@@ -58,6 +58,24 @@ _High-level takeaways that apply beyond the competition._
 2. Model still improving at wall clock cutoff — not converged, more throughput = better score
 3. int8+zlib compression is essentially free (1.3033 → 1.3045, only +0.001 BPB degradation)
 
+## On Metric Choice & Goodhart's Law
+
+We use val_bpb (bits per byte on FineWeb validation) as our sole optimization target, consistent with the Parameter Golf competition metric. We acknowledge this is subject to Goodhart's Law — when a measure becomes a target, it ceases to be a good measure.
+
+To keep our analysis honest, we categorize techniques by _what kind_ of improvement they provide:
+
+| Category | What it means | Example techniques |
+|----------|---------------|-------------------|
+| **Architecture/training** | Genuinely better model — learns more per FLOP | Rho-1 token filtering, structured FFN, better LR schedules |
+| **Throughput** | More steps in same wall clock — real improvement via more training | MQA speed gains, smaller batch accumulation |
+| **Compression** | Smaller artifact, not better learning | int8→int6 quantization, layer tying for size |
+
+Not all BPB improvements are equal. A technique that lowers BPB by fitting FineWeb's specific distribution (e.g., curriculum that mirrors the val set) is less valuable than one that improves the model's general language capability (e.g., better optimizer scheduling).
+
+**Why BPB is still a reasonable proxy:** The Chinchilla paper (Hoffmann et al., 2022) showed that held-out perplexity improvements from principled scaling _do_ transfer to downstream tasks. The FineWeb paper (Penedo et al., 2024) confirmed that data quality improvements lowering BPB also improve MMLU/ARC. BPB isn't meaningless — it's just not the full picture.
+
+**Our framing:** We study which techniques give real improvements under fixed compute constraints, while noting that some optimizations may be metric-specific rather than transferable.
+
 ## Crossover with Course Project
 
 _Findings from Parameter Golf that are relevant to the nanochat training pipeline project._

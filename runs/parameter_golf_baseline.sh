@@ -99,6 +99,20 @@ export VOCAB_SIZE=1024
 torchrun --standalone --nproc_per_node="$NGPUS" train_gpt.py
 
 # -----------------------------------------------------------------------------
+# Remind to download log file for plotting
+
+LOG_FILE="logs/${RUN_ID}.txt"
+if [ -f "$LOG_FILE" ]; then
+    echo ""
+    echo "============================================"
+    echo "  Log saved: $LOG_FILE"
+    echo "  Download for plotting:"
+    echo "    scp <pod>:$(pwd)/$LOG_FILE ."
+    echo "    python tools/plot_curves.py $LOG_FILE --mode single"
+    echo "============================================"
+fi
+
+# -----------------------------------------------------------------------------
 # Results + artifact size check
 
 echo ""
