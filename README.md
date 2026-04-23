@@ -1,54 +1,151 @@
 # DL Team Proposal
 
-Research and deep dive into Andrej Karpathy's LLM training frameworks: **nanoGPT**, **llm.c**, and **nanochat**.
+This project investigates efficient language model training under extreme compression constraints through [OpenAI's Parameter Golf](https://github.com/openai/parameter-golf) challenge. The objective is to train the best possible language model within a 16 MB artifact budget and a 10-minute wall-clock limit on 8×H100 GPUs, then analyze which architectural and optimization techniques contribute most to model quality as measured by validation bits-per-byte (BPB).
 
-## Focus: nanochat Training Pipeline
+## Team
 
-nanochat is a full end-to-end pipeline for building a ChatGPT-style model (~$100, ~4 hours on 8xH100).
+| Member | GitHub |
+|--------|--------|
+| James Vo | [@jamesEmerson112](https://github.com/jamesEmerson112) |
+| — | [@Ashray14](https://github.com/Ashray14) |
+| — | [@ialeksic3](https://github.com/ialeksic3) |
+| — | [@sranganath2](https://github.com/sranganath2) |
 
-### The 4 Training Stages
+## Current Status
 
-| Stage | Job | Dataset | Analogy |
-|---|---|---|---|
-| 1. Tokenizer | Build vocabulary | ClimbMix | Learning the alphabet |
-| 2. Pretrain | Learn language | FineWeb-EDU (100B tokens) | Reading millions of books |
-| 3. SFT | Learn to chat | SmolTalk + MMLU + GSM8K + SpellingBee (568K examples) | Practicing conversations with a tutor |
-| 4. RL (optional) | Get better at math | GSM8K | Doing homework and getting graded |
+| Metric | Value |
+|--------|-------|
+| Best val_bpb | **1.2735** (2×H100, MQA) |
+| PG Baseline | 1.2244 |
+| Leaderboard SOTA | 1.0810 |
+| Current GPU setup | 2×H100 |
+| Runs completed | 4 |
+| Deadline | April 30, 2026 |
 
-Each stage has its own dataset because each stage teaches the model something different. The model carries forward everything it learned — it's cumulative.
+## Repository Structure
 
 ```
-Raw Text ──▶ [Tokenizer] ──▶ [Pretrain] ──▶ [SFT] ──▶ [RL] ──▶ Chat UI
-              ~30 min        ~2.5-3 hrs    ~8-30min   ~1hr
+├── parameter-golf/          ← forked competition repo (submodule)
+├── nanochat/                ← Karpathy's training pipeline (submodule)
+├── runs/                    ← experiment launch scripts
+│   └── configs/             ← per-experiment .env configs
+├── tools/                   ← plotting utilities (learning curves)
+├── docs/
+│   ├── parameter-golf/      ← competition overview, experiments, findings
+│   ├── James_notes/         ← research notes (architecture, leaderboard, papers)
+│   ├── runs/                ← per-run experiment logs
+│   ├── official/            ← course deliverables (proposal, final paper)
+│   ├── meetings/            ← meeting notes
+│   └── plots/               ← generated charts
 ```
 
-### Deep Dive Notes
+## Getting Started
 
-Individual research notes are in `docs/<name>_notes/`:
+### 1. Clone the repository
 
-- [00 — Table of Contents](docs/James_notes/00_table-of-contents.md) — start here
-- [01 — Key Terms](docs/James_notes/01_key-terms.md) — glossary (BPE, SFT, RLHF, etc.)
-- [02 — Comparison Table](docs/James_notes/02_comparison-table.md) — nanoGPT vs llm.c vs nanochat
-- [03 — nanoGPT Notes](docs/James_notes/03_nanogpt-notes.md) — nanoGPT research
-- [04 — llm.c Notes](docs/James_notes/04_llmc-notes.md) — llm.c research
-- [05 — nanochat Notes](docs/James_notes/05_nanochat-notes.md) — nanochat research
-- [06 — Datasets & Benchmarks](docs/James_notes/06_datasets-benchmarks-comparison.md) — datasets & benchmarks across all 3
-- [07 — Training Stages](docs/James_notes/07_training-stages.md) — nanochat pipeline deep dive
-- [08 — Parameter Golf](docs/James_notes/08_parameter-golf.md) — OpenAI's 16 MB model compression challenge
-- [09 — NeurIPS Papers](docs/James_notes/09_neurips-papers.md) — 5 relevant papers for Related Work
+```bash
+git clone --recurse-submodules https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+```
 
-### Parameter Golf (Competition)
+### 2. Install dependencies
 
-We're participating in [OpenAI's Parameter Golf](https://github.com/openai/parameter-golf) — train the best LM in 16 MB / 10 min on 8xH100.
+Ensure you are running the latest version of PyTorch (2.6+) before installing project dependencies:
+
+```bash
+pip install --upgrade torch
+pip install -r parameter-golf/requirements.txt
+```
+
+### 3. Choose an experiment config
+
+Available configurations in `runs/configs/`:
+
+| Config | GPUs | Wall Clock | Purpose |
+|--------|------|------------|---------|
+| `smoke_test.env` | 1 | 5 min | Quick sanity check (tiny dataset) |
+| `explore_1gpu.env` | 1 | 10 min | Budget single-GPU exploration |
+| `explore_2gpu.env` | 2 | 10 min | Budget multi-GPU exploration |
+| `competition_8gpu.env` | 8 | 10 min | Full competition submission |
+| `gated_attn_elementwise.env` | 1 | 10 min | Gated attention ablation (elementwise) |
+| `gated_attn_headwise.env` | 1 | 10 min | Gated attention ablation (headwise) |
+
+### 4. Run
+
+```bash
+source runs/configs/<config>.env
+bash runs/parameter_golf_baseline.sh
+```
+
+The final `val_bpb` value in the output is the metric to compare against the baseline (1.2244).
+
+### Run Scripts
+
+Three scripts are available in `runs/`:
+
+| Script | Purpose |
+|--------|---------|
+| `parameter_golf_baseline.sh` | Main PG training pipeline — downloads data, trains model, checks 16 MB artifact budget |
+| `nanochat_vs_pgolf.sh` | Apples-to-apples BPB comparison between PG and nanochat on the same dataset |
+| `nanochat_single_gpu_d1.sh` | Train a minimal nanochat model (depth=1) on 1 GPU — sets up venv, downloads data, trains |
+
+```bash
+# PG training with a config
+source runs/configs/explore_2gpu.env && bash runs/parameter_golf_baseline.sh
+
+# Override a single variable inline
+NUM_KV_HEADS=1 bash runs/parameter_golf_baseline.sh
+
+# Compare PG vs nanochat engines
+bash runs/nanochat_vs_pgolf.sh
+
+# Nanochat smoke test (no config needed)
+bash runs/nanochat_single_gpu_d1.sh
+```
+
+### Config Environment Variables
+
+Configs in `runs/configs/` are `.env` files that export the following variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NGPUS` | `1` | Number of GPUs |
+| `MAX_WALLCLOCK_SECONDS` | `600` | Training time limit (seconds) |
+| `RUN_ID` | `baseline_sp1024` | Run name for logs |
+| `TRAIN_SHARDS` | all (80) | Limit data shards for fast testing |
+| `VAL_LOSS_EVERY` | `1000` | Evaluate validation BPB every N steps |
+| `TRAIN_LOG_EVERY` | `100` | Log training loss every N steps |
+| `GATED_ATTN` | off | Attention variant (`elementwise` or `headwise`) |
+| `NUM_KV_HEADS` | `4` | KV head count (1 = MQA, 4 = GQA) |
+
+## Experiment Results
+
+| Run | Date | GPUs | Change | Steps | val_bpb |
+|-----|------|------|--------|-------|---------|
+| GQA baseline | 2026-04-19 | 2×H100 | — | 1,770 | 1.3065 |
+| MQA | 2026-04-19 | 2×H100 | `NUM_KV_HEADS=1` | 3,767 | **1.2735** |
+
+Full experiment logs with hyperparameters and analysis are in [`docs/runs/`](docs/runs/).
+
+## Research Notes
+
+### Architecture and Leaderboard Analysis
+
+- [PG vs nanochat Architecture](docs/James_notes/13_pg-vs-nanochat-architecture.md) — structural comparison of the two codebases
+- [modded-nanogpt Lineage](docs/James_notes/14_modded-nanogpt-lineage.md) — genealogy: nanoGPT → modded-nanogpt → PG / nanochat
+- [Paper Summaries for Team](docs/James_notes/15_paper-summaries-for-team.md) — quick reference for key papers
+- [PG Leaderboard Techniques](docs/James_notes/16_pg-leaderboard-techniques.md) — deep dive into the top 8 techniques on the leaderboard
+- [PG Leaderboard Annotated](docs/James_notes/17_pg-leaderboard-annotated.md) — all 30+ leaderboard entries decoded
+- [Compute Plan](docs/James_notes/compute-plan.md) — GPU access, cost estimates, cloud alternatives
+
+### Parameter Golf
 
 - [Overview & Setup](docs/parameter-golf/00_overview.md)
 - [Experiments Tracker](docs/parameter-golf/experiments.md)
 - [Findings & Insights](docs/parameter-golf/findings.md)
-- [NeurIPS Paper Survey](docs/parameter-golf/neurips-paper-survey.md) — 18 papers with actionable techniques
-- [PG vs nanochat Architecture](docs/James_notes/13_pg-vs-nanochat-architecture.md)
-- [Compute Plan](docs/James_notes/compute-plan.md) — GPU access, cost estimates, cloud alternatives
+- [NeurIPS Paper Survey](docs/parameter-golf/neurips-paper-survey.md) — 18 papers with actionable techniques ranked by impact and effort
 
-### Tools
+## Tools
 
 **Learning Curve Plotter** — parse Parameter Golf training logs and produce publication-ready charts.
 
@@ -64,3 +161,15 @@ python tools/plot_curves.py logs/*.txt --mode csv
 ```
 
 Plots are saved to `docs/plots/`. Dark theme, PG Baseline (1.2244) and SOTA (1.0810) reference lines included.
+
+## Course Deliverables
+
+This project is part of CS 7643 Deep Learning. Course requirements and templates are in [`docs/official/`](docs/official/):
+
+- [Proposal Requirements](docs/official/requirements/proposal-requirements.md)
+- [Final Paper Requirements](docs/official/requirements/final-paper.md)
+- [Training Plan](docs/official/training-plan.md)
+
+## License
+
+[MIT](LICENSE)

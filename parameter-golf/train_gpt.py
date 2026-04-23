@@ -689,14 +689,17 @@ class CausalSelfAttention(nn.Module):
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
         # Step 5: The actual attention — softmax(Q·Kᵀ/√d) · V with causal mask
         #         Uses FlashAttention kernel under the hood (memory-efficient, no full NxN matrix)
-        #         enable_gqa=True tells PyTorch that K,V have fewer heads than Q
+        #         GQA: repeat K,V heads to match Q heads (e.g. 4 KV → 8 Q, repeat 2×)
+        if self.num_kv_heads != self.num_heads:
+            rep = self.num_heads // self.num_kv_heads
+            k = k.repeat_interleave(rep, dim=1)
+            v = v.repeat_interleave(rep, dim=1)
         y = F.scaled_dot_product_attention(
             q,
             k,
             v,
             attn_mask=None,
             is_causal=True,
-            enable_gqa=(self.num_kv_heads != self.num_heads),
         )
         # Step 6 (Gated Attention): sigmoid gate AFTER attention, BEFORE output projection
         #   Gate logits come from the Q projection (query-dependent, input-dependent).
