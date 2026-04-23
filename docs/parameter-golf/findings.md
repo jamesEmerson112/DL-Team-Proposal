@@ -13,10 +13,11 @@
 | 6 | Baseline (GQA) | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
 | 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
 | 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
-| 1 | Baseline (old pod) | 17.06M | 2.2027 | 1.3045 | 1,819 | — | 14.70 MB | Yes |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
 
-**All 2×H100 runs on PyTorch 2.11 unless noted. 10-min wall clock, 1024 vocab. PG baseline: 1.2244 BPB.**
+**All runs on 2×H100, PyTorch 2.11, 10-min wall clock, 1024 vocab. PG baseline: 1.2244 BPB.**
+
+> **Note:** Run 1 (2026-04-16) excluded from comparison — ran on 1×GPU (old pod, PyTorch 2.4.1), completed only 1,819 steps vs ~3,500+ on 2×H100. Result (1.3045 BPB) is not comparable. See Run 1 section below for details.
 
 **Best legal technique: LeakyReLU²** — free improvement (no extra params, no speed cost), gap to PG baseline: +0.0397.
 
