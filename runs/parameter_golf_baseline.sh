@@ -60,13 +60,16 @@ fi
 
 # -----------------------------------------------------------------------------
 # Download dataset (skip if already present)
+# Supports SP1024 (default) or SP8192 via VOCAB_SIZE env var
 
-DATA_DIR="./data/datasets/fineweb10B_sp1024"
-TOKENIZER_FILE="./data/tokenizers/fineweb_1024_bpe.model"
+VOCAB_SIZE="${VOCAB_SIZE:-1024}"
+SP_VARIANT="sp${VOCAB_SIZE}"
+DATA_DIR="./data/datasets/fineweb10B_${SP_VARIANT}"
+TOKENIZER_FILE="./data/tokenizers/fineweb_${VOCAB_SIZE}_bpe.model"
 
 if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
-    echo "==> Downloading FineWeb sp1024 dataset..."
-    DOWNLOAD_CMD="python3 data/cached_challenge_fineweb.py --variant sp1024"
+    echo "==> Downloading FineWeb ${SP_VARIANT} dataset..."
+    DOWNLOAD_CMD="python3 data/cached_challenge_fineweb.py --variant ${SP_VARIANT}"
     if [ -n "$TRAIN_SHARDS" ]; then
         DOWNLOAD_CMD="$DOWNLOAD_CMD --train-shards $TRAIN_SHARDS"
     fi
@@ -87,14 +90,14 @@ echo ""
 echo "============================================"
 echo "  Parameter Golf — Training Baseline"
 echo "  GPUs: $NGPUS | Run: $RUN_ID"
-echo "  Vocab: 1024 | Dataset: FineWeb sp1024"
+echo "  Vocab: $VOCAB_SIZE | Dataset: FineWeb ${SP_VARIANT}"
 echo "============================================"
 echo ""
 
 export RUN_ID
 export DATA_PATH="$DATA_DIR/"
 export TOKENIZER_PATH="$TOKENIZER_FILE"
-export VOCAB_SIZE=1024
+export VOCAB_SIZE
 
 torchrun --standalone --nproc_per_node="$NGPUS" train_gpt.py
 
@@ -213,6 +216,8 @@ vram = find(r'peak memory allocated: (\d+) MiB')
 gated = os.environ.get('GATED_ATTN', 'none')
 activation = os.environ.get('ACTIVATION', 'relu2')
 qk_gain = os.environ.get('QK_GAIN_INIT', '1.5')
+ttt_mode = os.environ.get('TTT_MODE', 'none')
+vocab_size = os.environ.get('VOCAB_SIZE', '1024')
 ngpus = '${NGPUS}'
 
 # Find last val_loss/val_bpb from TRAINING (exclude roundtrip lines)
@@ -223,6 +228,10 @@ last_raw_loss = train_vals[-1][0] if train_vals else '?'
 last_raw_bpb = train_vals[-1][1] if train_vals else '?'
 int8_loss = find(r'final_int8_zlib_roundtrip_exact val_loss:([\d.]+)')
 int8_bpb = find(r'final_int8_zlib_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+
+# TTT results (if enabled)
+ttt_loss = find(r'final_int8_ttt_exact val_loss:([\d.]+)')
+ttt_bpb = find(r'final_int8_ttt_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
 
 # Find last step (use ^step: to exclude warmup_step: lines)
 steps = re.findall(r'^step:(\d+)/(\d+)', text, re.MULTILINE)
@@ -241,6 +250,8 @@ print(f'  params:       {int(params):,}' if params != '?' else f'  params:      
 print(f'  gated_attn:   {gated}')
 print(f'  activation:   {activation}')
 print(f'  qk_gain_init: {qk_gain}')
+print(f'  ttt_mode:     {ttt_mode}')
+print(f'  vocab_size:   {vocab_size}')
 print(f'  steps:        {last_step}/{total_steps}')
 print(f'  step_avg:     {step_avg} ms')
 print(f'  peak_vram:    {vram} MiB')
@@ -250,8 +261,13 @@ print(f'  val_loss_int8:{int8_loss}')
 print(f'  val_bpb_int8: {int8_bpb}')
 print(f'  size_int8:    {comp_mb} MB')
 print(f'  under_budget: {budget_ok}')
+if ttt_bpb != '?':
+    print(f'  val_loss_ttt: {ttt_loss}')
+    print(f'  val_bpb_ttt:  {ttt_bpb}')
 print(f'  baseline:     1.2244')
-print(f'  gap:          +{float(int8_bpb) - 1.2244:.4f}' if int8_bpb != '?' else '  gap:          ?')
+# Use TTT BPB as final result if available, otherwise int8
+final_bpb = ttt_bpb if ttt_bpb != '?' else int8_bpb
+print(f'  gap:          +{float(final_bpb) - 1.2244:.4f}' if final_bpb != '?' else '  gap:          ?')
 "
 echo "============================================"
 echo ""

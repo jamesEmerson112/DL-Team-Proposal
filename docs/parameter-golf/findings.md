@@ -12,6 +12,7 @@
 | 2 | Headwise gated attn* | 17.10M | 2.1366 | 1.2653 | 3,287 | 182ms | 15.75 MB | Yes |
 | 6 | Baseline (GQA) | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
 | 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
+| 9 | Headwise + QK-Gain 5.0 | 17.10M | 2.1475 | 1.2719 | 2,861 | 210ms | 15.65 MB | Yes |
 | 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
 
@@ -21,7 +22,7 @@
 
 **Best legal technique: LeakyReLU²** — free improvement (no extra params, no speed cost), gap to PG baseline: +0.0397.
 
-**TODO:** Run `headwise_qkgain5.env` — QK-Gain 5.0 + headwise gated attn. PG ranks 1-6 all use QK-Gain 5.0-5.25 (up from default 1.5). Config ready, missed due to line-break paste error on pod. Command: `source runs/configs/headwise_qkgain5.env && export NGPUS=2 && bash runs/parameter_golf_baseline.sh`
+**TODO:** Run `sp8192_combo.env` — SP8192 + Score-First TTT + LeakyReLU² + QK-Gain 5.0 + headwise. All top PG submissions (ranks 1-3, ~1.08 BPB) use SP8192 + Score-First TTT. Command: `source runs/configs/sp8192_combo.env && export NGPUS=2 && bash runs/parameter_golf_baseline.sh`
 
 *\* Original technique by James Vo — gated attention applied post-SDPA with sigmoid gates, inspired by NeurIPS 2025 Best Paper (arxiv.org/abs/2505.06708).*
 
@@ -407,6 +408,44 @@
 
 **Key finding:** LeakyReLU² gives a small free improvement (-0.0008 BPB, no speed/size cost). Adding headwise gates on top doesn't help — the speed penalty (fewer steps) negates any per-step quality gain.
 
+### Run 9 — Headwise + QK-Gain 5.0, 2×H100 (2026-04-24)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-24 |
+| GPUs | 2× H100 |
+| Technique | Headwise gated attention + QK-Gain 5.0 (PG ranks 1-6 use 5.0-5.25) |
+| Model params | 17,096,776 (~17.1M, +37K from headwise gates) |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 2,861 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 13,217 MiB |
+| Step avg | 210.48 ms |
+| **val_loss (raw)** | **2.1438** |
+| **val_bpb (raw)** | **1.2697** |
+| **val_loss (int8+zlib)** | **2.1475** |
+| **val_bpb (int8+zlib)** | **1.2719** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0475 |
+| Model size (int8+zlib) | **15.65 MB (under 16 MB budget, +0.24 MB headroom)** |
+| PyTorch version | 2.11.0 |
+
+**Training curve:**
+- Step 2700: train_loss 2.1388
+- Step 2800: val_bpb 1.2709
+- Step 2861: val_bpb 1.2697 (stopped at wall clock cap)
+
+**Observations:**
+- **QK-Gain 5.0 hurt on SP1024** — val_bpb 1.2719 vs 1.2653 (headwise alone, Run 2)
+- Much slower per step: 210ms vs 182ms (headwise alone) — 15% slower
+- Fewer steps completed: 2,861 vs 3,287 (headwise alone) — 13% fewer
+- Higher VRAM: 13,217 MiB vs 10,374 MiB (headwise alone)
+- QK-Gain 5.0 likely needs SP8192 to be effective — all leaderboard uses of QK-Gain 5.0+ are SP8192
+- The speed penalty + VRAM overhead negate any potential per-step quality gain at SP1024 scale
+
 ## Techniques That Worked
 
 _Add entries as we discover things._
@@ -420,6 +459,7 @@ _Add entries as we discover things._
 | Technique | Expected impact | Actual result | Why it failed |
 |---|---|---|---|
 | Gated Attention (elementwise) | Better BPB than headwise | 1.2602 BPB but 17.87 MB (over budget) | +2.36M params makes compressed model too large. Marginal BPB gain (+0.005) not worth the cost. |
+| QK-Gain 5.0 (on SP1024) | Better attention scaling | 1.2719 BPB (worse than headwise 1.2653) | 15% slower steps (210ms vs 182ms), higher VRAM (13GB vs 10GB). QK-Gain 5.0 likely needs SP8192 to be effective. |
 
 ## Key Insights
 
