@@ -36,19 +36,199 @@
 - int8+zlib compression fits comfortably under 16 MB
 - BPB roundtrip after compression: 1.3045 (negligible degradation from 1.3033)
 
+### Run 2 — Gated Attention headwise, 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | Gated Attention — headwise (1 sigmoid gate per head, NeurIPS 2025 Best Paper) |
+| Paper | arxiv.org/abs/2505.06708 |
+| Model params | 17,096,776 (~17.1M, +37K from gate projections) |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,287 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 10,374 MiB |
+| Step avg | 182.54 ms |
+| **val_bpb (raw)** | **1.2626** |
+| **val_bpb (int8+zlib)** | **1.2653** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0409 (down from +0.0801 in Run 1) |
+| Model size (raw) | 67.4 MB |
+| Model size (int8+zlib) | **15.75 MB** (under 16 MB budget) |
+| Compression ratio | 3.91× |
+| PyTorch version | 2.11.0 |
+
+**Training curve:**
+- Step 0: val_bpb 4.1085
+- Step 1000: val_bpb 1.3780
+- Step 2000: val_bpb 1.3208
+- Step 3000: val_bpb 1.2725
+- Step 3287: val_bpb 1.2626 (still improving when time ran out)
+
+**Observations:**
+- Gap to baseline cut in half vs Run 1 (0.0409 vs 0.0801)
+- Much higher throughput than Run 1 (3,287 vs 1,819 steps) — likely due to PyTorch 2.11.0 vs 2.4.1 on previous pod
+- Headwise gates add only ~37K params (~0.2% overhead) — nearly free
+- Model still improving at cutoff — not converged
+- Compressed size 15.75 MB, tight but under 16 MB budget
+
+**Note:** Run 1 vs Run 2 improvement comes from two factors: (1) gated attention headwise, and (2) newer PyTorch (2.11 vs 2.4.1) giving higher throughput. Need a clean baseline on the same pod/PyTorch to isolate the gated attention effect.
+
+### Run 3 — Gated Attention elementwise, 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | Gated Attention — elementwise (1 sigmoid gate per dim per head, NeurIPS 2025 Best Paper) |
+| Paper | arxiv.org/abs/2505.06708 |
+| Model params | 19,419,208 (~19.4M, +2.36M from gate projections) |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,129 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 11,518 MiB |
+| Step avg | 191.75 ms |
+| **val_bpb (raw)** | **1.2579** |
+| **val_bpb (int8+zlib)** | **1.2602** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0358 |
+| Model size (raw) | 76.7 MB |
+| Model size (int8+zlib) | **17.87 MB (OVER 16 MB budget)** |
+| Compression ratio | 3.92× |
+| PyTorch version | 2.11.0 |
+
+**Training curve:**
+- Step 0: val_bpb 4.1098
+- Step 1000: val_bpb 1.3696
+- Step 2000: val_bpb 1.3130
+- Step 3000: val_bpb 1.2613
+- Step 3129: val_bpb 1.2579 (still improving when time ran out)
+
+**Observations:**
+- Slightly better BPB than headwise (1.2602 vs 1.2653) but **busts the 16 MB budget** (17.87 MB)
+- 2.36M extra params is too many — compressed model 1.87 MB over limit
+- Slower per step (191ms vs 182ms headwise) → fewer steps (3,129 vs 3,287)
+- More VRAM (11.5 GB vs 10.4 GB)
+- The marginal BPB gain (~0.005) is not worth the budget/speed cost
+
+### Run 2 vs Run 3 — Headwise vs Elementwise (same pod, same PyTorch)
+
+| Metric | Headwise (Run 2) | Elementwise (Run 3) | Winner |
+|---|---|---|---|
+| val_bpb (compressed) | 1.2653 | 1.2602 | Elementwise (+0.005) |
+| Extra params | +37K (0.2%) | +2.36M (14%) | Headwise |
+| Compressed size | 15.75 MB | 17.87 MB | Headwise (under budget) |
+| Steps completed | 3,287 | 3,129 | Headwise |
+| Step avg | 182 ms | 192 ms | Headwise |
+| Peak VRAM | 10.4 GB | 11.5 GB | Headwise |
+| Under 16 MB? | Yes | **No** | Headwise |
+
+**Verdict:** Headwise wins for PG. Elementwise has marginally better BPB but fails the size constraint and is slower. Headwise is nearly free (37K params, no speed penalty) and fits under budget.
+
+### Run 4 — MQA (NUM_KV_HEADS=1), 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | MQA — Multi-Query Attention (1 KV head shared across all 8 Q heads) |
+| Model params | 17,649,736 (~17.6M) |
+| Architecture | 9 layers, 512 dims, 8 heads, **1 kv_head** (MQA) |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,370 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 10,710 MiB |
+| Step avg | 178.03 ms |
+| **val_bpb (raw)** | **1.2734** |
+| **val_bpb (int8+zlib)** | **1.2761** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0517 |
+| Model size (raw) | 69.6 MB |
+| Model size (int8+zlib) | **16.84 MB (OVER 16 MB budget)** |
+| Compression ratio | 3.79× |
+| PyTorch version | 2.11.0 |
+
+**Training curve:**
+- Step 0: val_bpb 4.1085
+- Step 1000: val_bpb 1.3864
+- Step 2000: val_bpb 1.3329
+- Step 3000: val_bpb 1.2861
+- Step 3370: val_bpb 1.2734 (still improving when time ran out)
+
+**Observations:**
+- Worst BPB of the three techniques tested on this pod (1.2761 vs headwise 1.2653 vs elementwise 1.2602)
+- Also over 16 MB budget (16.84 MB)
+- Fastest per step (178ms) — fewer KV params = less compute, more steps (3,370)
+- Despite more steps, BPB is worse — MQA trades quality for speed, bad tradeoff for PG where BPB matters
+
+### All Runs on PyTorch 2.11 Pod — Comparison
+
+| Run | Technique | KV Heads | val_bpb | Steps | Size (int8+zlib) | Under 16 MB? |
+|-----|-----------|----------|---------|-------|-------------------|-------------|
+| 2 | Gated Attn (headwise) | 4 (GQA) | **1.2653** | 3,287 | **15.75 MB** | **Yes** |
+| 3 | Gated Attn (elementwise) | 4 (GQA) | 1.2602 | 3,129 | 17.87 MB | No |
+| 4 | MQA | 1 (MQA) | 1.2761 | 3,370 | 16.84 MB | No |
+
+### Run 5 — GQA baseline (intended), 2×H100 (2026-04-23)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-23 |
+| GPUs | 2× H100 |
+| Technique | GQA baseline (no gated attention) — **INVALID: stale env var** |
+| Model params | 19,419,208 (~19.4M) — should be 17M, shell had `GATED_ATTN=elementwise` from prior run |
+| Architecture | 9 layers, 512 dims, 8 heads, 4 kv_heads, GQA |
+| Vocab | 1024 (SentencePiece BPE) |
+| Batch tokens | 524,288 |
+| Grad accum steps | 4 |
+| Warmup steps | 20 |
+| Steps completed | 3,296 / 20,000 (hit 10-min wall clock cap) |
+| Peak VRAM | 11,518 MiB |
+| Step avg | 182.03 ms |
+| **val_bpb (raw)** | **1.2550** |
+| **val_bpb (int8+zlib)** | **1.2576** |
+| Baseline to beat | 1.2244 |
+| Gap | +0.0332 |
+| Model size (raw) | 76.66 MB |
+| Model size (int8+zlib) | **17.96 MB (OVER 16 MB budget)** |
+| Compression ratio | 3.92× |
+| PyTorch version | 2.11.0 |
+
+**Training curve:**
+- Step 0: val_bpb 4.1098
+- Step 1000: val_bpb 1.3687
+- Step 2000: val_bpb 1.3144
+- Step 3000: val_bpb 1.2648
+- Step 3296: val_bpb 1.2550 (still improving when time ran out)
+
+**Observations:**
+- **INVALID RUN:** Intended as a clean GQA baseline, but shell had stale `GATED_ATTN=elementwise` env var from a previous `source runs/configs/gated_attn_elementwise.env`. Param count (19.4M) matches Run 3 exactly.
+- Results are essentially Run 3 re-run with slightly more steps (3,296 vs 3,129) → slightly better BPB (1.2576 vs 1.2602)
+- Confirms elementwise model over 16 MB budget (17.96 MB)
+- **Root cause fix:** All env configs now explicitly set `GATED_ATTN=none` and `ACTIVATION=relu2` as defaults, so sourcing any config resets stale env vars. Clean baseline should have 17,059,912 params and ~14.7 MB compressed.
+
 ## Techniques That Worked
 
 _Add entries as we discover things._
 
 | Technique | Impact on BPB | Why it works |
 |---|---|---|
-| TBD | TBD | TBD |
+| Gated Attention (headwise) | 1.2653 (compressed), fits 16 MB | Sigmoid gate after SDPA lets model suppress uninformative heads per token. Nearly free: +37K params, no speed penalty. |
 
 ## Techniques That Didn't Work
 
 | Technique | Expected impact | Actual result | Why it failed |
 |---|---|---|---|
-| TBD | TBD | TBD | TBD |
+| Gated Attention (elementwise) | Better BPB than headwise | 1.2602 BPB but 17.87 MB (over budget) | +2.36M params makes compressed model too large. Marginal BPB gain (+0.005) not worth the cost. |
 
 ## Key Insights
 

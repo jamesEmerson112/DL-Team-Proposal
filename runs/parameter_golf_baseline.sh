@@ -122,33 +122,61 @@ echo "============================================"
 echo ""
 
 # Check artifact size (code + weights must fit in 16 MB = 16,000,000 bytes)
+# PG submission uses int8+zlib compressed model — check that first, fall back to raw
 python3 -c "
 import os, glob
 
 budget = 16_000_000  # 16 MB in bytes
 
-# Find model weights (common patterns)
-weight_files = glob.glob('*.pt') + glob.glob('*.pth') + glob.glob('*.bin') + glob.glob('model.*')
+# Prefer int8+zlib compressed artifact (actual submission format)
+compressed = glob.glob('*.int8.ptz') + glob.glob('*.ptz')
+raw_weights = glob.glob('*.pt') + glob.glob('*.pth') + glob.glob('*.bin') + glob.glob('model.*')
 code_files = glob.glob('train_gpt*.py')
 
-total = 0
 print('  Artifact components:')
-for f in sorted(set(weight_files + code_files)):
+
+# Show compressed size (submission-relevant)
+comp_total = 0
+for f in sorted(set(compressed)):
     if os.path.isfile(f):
         size = os.path.getsize(f)
-        total += size
-        print(f'    {f}: {size:,} bytes ({size/1e6:.2f} MB)')
+        comp_total += size
+        print(f'    {f}: {size:,} bytes ({size/1e6:.2f} MB) [compressed]')
+
+# Show raw size for reference
+raw_total = 0
+for f in sorted(set(raw_weights)):
+    if os.path.isfile(f) and f not in compressed:
+        size = os.path.getsize(f)
+        raw_total += size
+        print(f'    {f}: {size:,} bytes ({size/1e6:.2f} MB) [raw]')
+
+code_total = 0
+for f in sorted(set(code_files)):
+    if os.path.isfile(f):
+        size = os.path.getsize(f)
+        code_total += size
+        print(f'    {f}: {size:,} bytes ({size/1e6:.2f} MB) [code]')
+
+# Use compressed if available, otherwise raw
+if comp_total > 0:
+    submission = comp_total + code_total
+    label = 'int8+zlib'
+else:
+    submission = raw_total + code_total
+    label = 'raw (no compressed artifact found)'
 
 print(f'')
-print(f'  Total artifact:      {total:,} bytes ({total/1e6:.2f} MB)')
-print(f'  Budget:              {budget:,} bytes (16.00 MB)')
-if total > 0:
-    print(f'  Under budget:        {\"YES\" if total <= budget else \"NO\"} ({(budget - total)/1e6:.2f} MB headroom)')
+print(f'  Submission size ({label}): {submission:,} bytes ({submission/1e6:.2f} MB)')
+print(f'  Budget:                    {budget:,} bytes (16.00 MB)')
+if submission > 0:
+    headroom = (budget - submission) / 1e6
+    status = 'YES' if submission <= budget else 'NO'
+    print(f'  Under budget:              {status} ({headroom:+.2f} MB headroom)')
 else:
-    print(f'  (no weight files found — check training output)')
+    print(f'  (no weight files found -- check training output)')
 print()
 print(f'  Baseline to beat:    1.2244 BPB')
-print(f'  Check training stdout above for your val_bpb.')
 "
 
 echo ""
