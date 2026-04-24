@@ -61,3 +61,42 @@ This is a **research-only repository** — no code implementation. Work products
 - [feat] Cloned fork to `C:\Users\voan2\Documents\GitHub\parameter-golf` (sibling to DL-Team-Proposal)
 - Confirmed `runs/parameter_golf_baseline.sh` auto-discovers the sibling `parameter-golf/` directory — no script updates needed
 - Experiment workflow confirmed: edit `train_gpt.py` → run with `torchrun` → read `val_bpb` from output → compare to baseline (1.2244) and SOTA (1.0810)
+
+### 2026-04-23 (Session 3)
+- Implemented LeakyReLU² activation support in `parameter-golf/train_gpt.py`: added `ACTIVATION` env var (default "relu2", option "leaky_relu2" = LeakyReLU(0.5)²), threaded through MLP → Block → GPT → instantiation site
+- Created experiment configs: `runs/configs/leaky_relu2.env` and `runs/configs/leaky_relu2_headwise.env`
+- [bug] Caught critical stale env var bug: Run 5 (intended as clean GQA baseline) produced 19.4M params instead of 17M because shell had leftover `GATED_ATTN=elementwise` from a previous `source runs/configs/gated_attn_elementwise.env`. The gated attention code is correct (conditionally allocates gate dims), but env vars persist across runs in the same shell session.
+- [fix] Added explicit `GATED_ATTN=none` and `ACTIVATION=relu2` defaults to ALL env configs (explore_1gpu, explore_2gpu, competition_8gpu, smoke_test, gated_attn_elementwise, gated_attn_headwise, leaky_relu2, leaky_relu2_headwise) so sourcing any config always resets both toggles — prevents stale env var contamination
+- [fix] Updated budget check in `runs/parameter_golf_baseline.sh` to use int8+zlib compressed artifact size (`*.ptz`) instead of raw `.pt` files — matches actual PG submission format
+- Logged Run 5 in `docs/parameter-golf/findings.md` as INVALID (stale env var), noted root cause and fix
+- [insight] When using `source` to load env configs, variables persist in the shell — every config must explicitly set ALL experiment toggles, not just the ones it changes
+- Ran 4 experiments on 2×H100 pod (PyTorch 2.11, 10-min wall clock):
+  - Run 6 + 6v2: Clean GQA baseline — 17M params confirmed, val_bpb 1.2649-1.2667, under 16 MB budget
+  - Run 7: LeakyReLU² — **best technique**, val_bpb 1.2641, free (no extra params, no speed cost)
+  - Run 8: LeakyReLU² + headwise — val_bpb 1.2642, combo doesn't stack (headwise adds speed penalty without quality gain on top of LeakyReLU²)
+- [feat] Added copy-paste summary block to `runs/parameter_golf_baseline.sh` — auto-extracts run_id, params, val_loss, val_bpb, size, budget status from log file
+- [fix] Fixed summary script bugs: warmup_step regex collision with step count, step_avg grabbing step-0 value, val_bpb_raw picking up roundtrip value instead of last training val
+- [feat] Added val_loss (raw + int8+zlib) to all run entries and comparison tables in `docs/parameter-golf/findings.md`
+- [feat] Added summary table at top of `docs/parameter-golf/findings.md` — all runs sorted by BPB
+- [feat] Created `runs/configs/headwise_qkgain5.env` — QK-Gain 5.0 + headwise gated attn (PG ranks 1-6 all use 5.0-5.25). Still pending run.
+- Marked headwise/elementwise gated attention as James Vo's original technique in findings
+- [finding] LeakyReLU² is the best legal technique: +0.0008 BPB over baseline, zero cost. Headwise alone is competitive but doesn't stack with LeakyReLU². Gap to PG baseline (1.2244) still +0.0397.
+- [todo] Run headwise_qkgain5.env — could be a big mover based on leaderboard
+
+### 2026-04-23 (Session 4)
+- [research] Searched 10 topic areas beyond existing 18-paper NeurIPS survey to find new techniques for Parameter Golf (17M param GPT, 16MB, 10min 8xH100)
+- Found 12 new applicable techniques; expanded `docs/parameter-golf/neurips-paper-survey.md` from 18 to 29 papers
+- Merged `docs/parameter-golf/paper-survey.md` into `docs/parameter-golf/neurips-paper-survey.md` (deleted duplicate)
+- Added "PG Leaderboard" column to all 29 papers indicating which are proven on the competition leaderboard
+- Expanded Top 5 actionable techniques to Top 8, added "Leaderboard-Proven Techniques" section (7 paper-backed + 8 competition techniques)
+- Added "Papers Blocked/Low Priority" section for techniques that don't fit PG constraints
+- Key new papers found:
+  - Value Residual Learning / ResFormer (ACL 2025) — 16% fewer params equivalent, on leaderboard rank 8
+  - Differential Attention (ICLR 2025 Oral) — two-softmax-subtract attention, noise cancellation
+  - HybridNorm (NeurIPS 2025) / Peri-LN (ICML 2025) — better norm placement, zero extra params
+  - Schedule-Free Optimizer (NeurIPS 2024 Oral) — no LR schedule needed, ideal for fixed wall clock
+  - Early Weight Averaging (COLM 2024) — proven on PG leaderboard ranks 7,12,13,14
+  - FlashAttention-3 (NeurIPS 2024) — proven on leaderboard rank 15, 1.5-2x over FA2 on H100
+  - Exclusive Self-Attention / XSA (arXiv 2026) — proven on leaderboard ranks 8,10,14,15
+- [finding] PG SOTA updated: current best is ~1.028 BPB (down from 1.081 previously noted); top submissions now use LoRA TTT, cross-sequence attention, and pre-quantization TTT
+- [todo] Prioritize leaderboard-proven techniques for next runs: EWA, FlashAttention-3, XSA, Value Residual Learning

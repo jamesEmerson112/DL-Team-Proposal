@@ -1,0 +1,20 @@
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git checkout learning-curve-chart
+cd parameter-golf
+pip install -r requirements.txt
+pip install huggingface_hub
+pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Download SP8192 dataset (~5-10 min)
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# Run
+cd ..
+source runs/configs/sp8192_combo_slim.env
+echo "VERIFY: GATED_ATTN=$GATED_ATTN VOCAB_SIZE=$VOCAB_SIZE ACTIVATION=$ACTIVATION MODEL_DIM=$MODEL_DIM TTT_MODE=$TTT_MODE"
+export NGPUS=2
+export RUN_ID=sp8192_combo_slim_2gpu_v2
+bash runs/parameter_golf_baseline.sh
