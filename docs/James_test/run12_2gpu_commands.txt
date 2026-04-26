@@ -1,7 +1,10 @@
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
+git fetch origin 
 git checkout James-experiment
+git pull origin James-experiment
 cd parameter-golf
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install huggingface_hub
 pip install --upgrade torch
