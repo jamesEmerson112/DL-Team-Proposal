@@ -11,7 +11,8 @@
       "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f{item[''''type'''']:4s} {item[''''name'''']}\\) for item in data]\")",
       "Bash(curl -s https://api.github.com/repos/openai/parameter-golf/contents/records/track_10min_16mb)",
       "Bash(curl:*)",
-      "WebFetch(domain:arxiv.org)"
+      "WebFetch(domain:arxiv.org)",
+      "Bash(find /tmp/rho -type f -name *.py)"
     ]
   }
 }

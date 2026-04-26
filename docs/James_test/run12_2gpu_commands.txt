@@ -11,10 +11,71 @@ python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 rm -f data/manifest.json
 MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
 
-# Run
 cd ..
+
+# ===========================================================================
+# RUN A: SP8192 combo slim retry (2xH100)
+# Run 12 was accidental vanilla baseline — config source failed (stale env).
+# This is the proper retry with all techniques: SP8192 + TTT + LeakyReLU2 +
+# QK-Gain 5.0 + headwise + MODEL_DIM=448.
+# Compare against Run 11 (8xH100, 1.2077 BPB) to see 2-vs-8 GPU scaling.
+# ===========================================================================
 source runs/configs/sp8192_combo_slim.env
-echo "VERIFY: GATED_ATTN=$GATED_ATTN VOCAB_SIZE=$VOCAB_SIZE ACTIVATION=$ACTIVATION MODEL_DIM=$MODEL_DIM TTT_MODE=$TTT_MODE"
+echo "VERIFY: GATED_ATTN=$GATED_ATTN VOCAB_SIZE=$VOCAB_SIZE ACTIVATION=$ACTIVATION MODEL_DIM=$MODEL_DIM TTT_MODE=$TTT_MODE SLM_ENABLED=$SLM_ENABLED"
 export NGPUS=2
 export RUN_ID=sp8192_combo_slim_2gpu_v2
+bash runs/parameter_golf_baseline.sh
+
+# ===========================================================================
+# RUN B: SLM Smoke Test (Phase 1) — Selective Language Modeling (Rho-1)
+# Keeps top 60% tokens by loss, skips easy ones the model already knows.
+# SP1024 baseline so we can compare against Run 6v2 (1.2649 BPB).
+# PASS: val_bpb improves (any amount) AND step_avg doesn't regress >5%.
+# FAIL: val_bpb worsens -> try different k% before giving up.
+# ===========================================================================
+source runs/configs/slm_test.env
+echo "VERIFY: SLM_ENABLED=$SLM_ENABLED SLM_RATIO=$SLM_RATIO GATED_ATTN=$GATED_ATTN ACTIVATION=$ACTIVATION"
+export NGPUS=2
+export RUN_ID=slm_test_k60_2gpu
+bash runs/parameter_golf_baseline.sh
+
+# ===========================================================================
+# RUN C: SLM Ratio Sweep (Phase 2) — only run if Phase 1 passes
+# Test k=0.5, 0.7, 0.8 to find the sweet spot for 17M scale.
+# PASS: at least one ratio beats baseline by >0.002 BPB.
+# ===========================================================================
+
+# k=0.5 (aggressive — keep only top 50%)
+source runs/configs/slm_sweep_50.env
+echo "VERIFY: SLM_ENABLED=$SLM_ENABLED SLM_RATIO=$SLM_RATIO"
+export NGPUS=2
+export RUN_ID=slm_sweep_k50_2gpu
+bash runs/parameter_golf_baseline.sh
+
+# k=0.7 (conservative)
+source runs/configs/slm_sweep_70.env
+echo "VERIFY: SLM_ENABLED=$SLM_ENABLED SLM_RATIO=$SLM_RATIO"
+export NGPUS=2
+export RUN_ID=slm_sweep_k70_2gpu
+bash runs/parameter_golf_baseline.sh
+
+# k=0.8 (very conservative)
+source runs/configs/slm_sweep_80.env
+echo "VERIFY: SLM_ENABLED=$SLM_ENABLED SLM_RATIO=$SLM_RATIO"
+export NGPUS=2
+export RUN_ID=slm_sweep_k80_2gpu
+bash runs/parameter_golf_baseline.sh
+
+# ===========================================================================
+# RUN D: SLM + SP8192 combo slim (Phase 3) — only run if Phase 2 passes
+# Stack best SLM ratio with full competition config.
+# Replace SLM_RATIO below with the winner from Phase 2.
+# PASS: val_bpb improves over Run 11 (1.2077) AND fits 16 MB.
+# ===========================================================================
+source runs/configs/sp8192_combo_slim.env
+echo "VERIFY: SLM_ENABLED=$SLM_ENABLED SLM_RATIO=$SLM_RATIO GATED_ATTN=$GATED_ATTN TTT_MODE=$TTT_MODE"
+export NGPUS=2
+export SLM_ENABLED=1
+export SLM_RATIO=0.6  # <-- replace with best ratio from Phase 2
+export RUN_ID=sp8192_combo_slim_slm_2gpu
 bash runs/parameter_golf_baseline.sh

@@ -100,3 +100,22 @@ This is a **research-only repository** — no code implementation. Work products
   - Exclusive Self-Attention / XSA (arXiv 2026) — proven on leaderboard ranks 8,10,14,15
 - [finding] PG SOTA updated: current best is ~1.028 BPB (down from 1.081 previously noted); top submissions now use LoRA TTT, cross-sequence attention, and pre-quantization TTT
 - [todo] Prioritize leaderboard-proven techniques for next runs: EWA, FlashAttention-3, XSA, Value Residual Learning
+
+### 2026-04-26 (Session 5)
+- [research] Deep-dived into Rho-1 paper (NeurIPS 2024 Best Paper Runner-Up) — Selective Language Modeling (SLM). Explained token categories (H→H, H→L, L→H, L→L), excess loss formula, and how only ~26% of tokens drive meaningful learning
+- [research] Explored XSA (Exclusive Self-Attention, arXiv 2026) and Differential Attention (ICLR 2025 Oral) — two attention modifications proven on PG leaderboard
+- [research] Confirmed microsoft/rho GitHub repo has NO training code — only pretrained models + eval. Must implement SLM ourselves
+- [feat] Created `docs/James_notes/19_rho1-selective-language-modeling.md` — comprehensive research notes with 4-phase testing plan (smoke test → ratio sweep → competition run → 3-seed submission), pass/fail criteria, estimated costs (~$26 total)
+- [feat] Implemented SLM Option A (simple loss-threshold) in `parameter-golf/train_gpt.py`:
+  - Added `SLM_ENABLED` + `SLM_RATIO` env vars to Hyperparameters class
+  - Added params to `GPT.__init__` signature + model instantiation
+  - Modified loss at line 743: when SLM enabled during training, uses `F.cross_entropy(reduction="none")` + `torch.topk` to keep top k% tokens by loss, averages only those. Validation still uses full mean loss.
+- [feat] Updated ALL 11 existing .env configs with `SLM_ENABLED=0` + `SLM_RATIO=0.6` defaults (prevents stale env var contamination)
+- [feat] Created 4 new experiment configs: `slm_test.env` (k=0.6), `slm_sweep_50.env`, `slm_sweep_70.env`, `slm_sweep_80.env`
+- [feat] Updated `runs/parameter_golf_baseline.sh` summary block to print slm_enabled/slm_ratio
+- [feat] Created `runs/parameter_golf_8gpu_3seed_run.sh` — wrapper that runs 3 seeds (42, 1337, 2025) and computes mean/std val_bpb with submission.json snippet
+- [feat] Created `runs/run_all_2gpu.sh` — sequential runner for all 2xH100 experiments (SP8192 combo slim retry + SLM phases 1-3), with results summary table at the end
+- [feat] Updated `docs/James_test/run12_2gpu_commands.txt` and `docs/James_test/run_8gpu_commands.txt` with SLM experiment commands (Runs A-E with notes and pass/fail criteria)
+- [edit] Sorted paper survey table in `docs/parameter-golf/neurlps-paper-survey.md` by year (2026→2023), kept original # numbers for reference stability
+- [note] Paper #15 (Small Batch Size Training) flagged as low-hanging fruit — just remove grad_accum_steps + tune beta2, no code change needed. Keeping in mind for later.
+- [finding] TTT (Test-Time Training) is NOT from a paper in our survey — it's a practitioner-developed eval-time trick from the PG competition (attributed to @dexhunter PR #1413)
