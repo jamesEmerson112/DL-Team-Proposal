@@ -1,6 +1,6 @@
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
-git checkout learning-curve-chart
+git checkout James-experiment
 cd parameter-golf
 pip install -r requirements.txt
 pip install huggingface_hub
