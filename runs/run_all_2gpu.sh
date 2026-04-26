@@ -122,6 +122,81 @@ run_experiment \
     "SLM_RATIO=0.6"
 
 # ==========================================================================
+# RUN E: Headwise + QK-Gain 5.0, no TTT (SP1024)
+# User requested: headwise attention without TTT on 2xH100.
+# Compare against Run 2 (headwise, 1.2653 BPB) to see QK-Gain 5.0 effect.
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/headwise_qkgain5.env"
+run_experiment \
+    "Run E: Headwise + QK-Gain 5.0" \
+    "headwise_qkgain5_2gpu"
+
+# ==========================================================================
+# RUN F: LeakyReLU² alone (SP1024)
+# Re-run on 2xH100 for clean baseline comparison.
+# Compare against Run 7 (LeakyReLU², 1.2641 BPB on 2xH100).
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/leaky_relu2.env"
+run_experiment \
+    "Run F: LeakyReLU2 baseline" \
+    "leaky_relu2_2gpu"
+
+# ==========================================================================
+# RUN G: LeakyReLU² + SLM k=0.6
+# Do the two best cheap techniques stack?
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/leaky_relu2_slm.env"
+run_experiment \
+    "Run G: LeakyReLU2 + SLM k=0.6" \
+    "leaky_relu2_slm_k60_2gpu"
+
+# ==========================================================================
+# RUN H: SP8192 combo slim WITHOUT TTT
+# Isolate TTT's contribution by running full combo minus TTT.
+# Compare against Run A (with TTT) to measure TTT delta.
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/sp8192_combo_slim_nottt.env"
+run_experiment \
+    "Run H: SP8192 combo slim no TTT" \
+    "sp8192_combo_slim_nottt_2gpu"
+
+# ==========================================================================
+# RUN I: SLM k=0.4 (very aggressive — keep only top 40%)
+# Extended sweep: might overtrain on hard tokens or find hidden signal.
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/slm_sweep_40.env"
+run_experiment \
+    "Run I: SLM sweep k=0.4" \
+    "slm_sweep_k40_2gpu"
+
+# ==========================================================================
+# RUN J: SLM k=0.9 (barely selective — drop easiest 10%)
+# Extended sweep: minimal filtering, cheap improvement test.
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/slm_sweep_90.env"
+run_experiment \
+    "Run J: SLM sweep k=0.9" \
+    "slm_sweep_k90_2gpu"
+
+# ==========================================================================
+# RUN K: Headwise + QK-Gain 5.0 + SLM k=0.6
+# Best arch technique + SLM.
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/headwise_qkgain5_slm.env"
+run_experiment \
+    "Run K: Headwise+QKG5 + SLM k=0.6" \
+    "headwise_qkgain5_slm_k60_2gpu"
+
+# ==========================================================================
+# RUN L: LeakyReLU² + headwise + SLM k=0.6
+# Triple combo: best activation + best arch + SLM.
+# ==========================================================================
+source "$REPO_ROOT/runs/configs/leaky_relu2_headwise_slm.env"
+run_experiment \
+    "Run L: LReLU2+headwise+SLM k=0.6" \
+    "leaky_relu2_headwise_slm_k60_2gpu"
+
+# ==========================================================================
 # RESULTS SUMMARY
 # ==========================================================================
 
@@ -136,12 +211,20 @@ python3 -c "
 import os, re, glob
 
 run_ids = [
-    ('A',  'sp8192_combo_slim_2gpu_v2',   'SP8192 combo slim retry'),
-    ('B',  'slm_test_k60_2gpu',           'SLM smoke test k=0.6'),
-    ('C1', 'slm_sweep_k50_2gpu',          'SLM sweep k=0.5'),
-    ('C2', 'slm_sweep_k70_2gpu',          'SLM sweep k=0.7'),
-    ('C3', 'slm_sweep_k80_2gpu',          'SLM sweep k=0.8'),
-    ('D',  'sp8192_combo_slim_slm_2gpu',  'SP8192 combo slim + SLM'),
+    ('A',  'sp8192_combo_slim_2gpu_v2',          'SP8192 combo slim retry'),
+    ('B',  'slm_test_k60_2gpu',                  'SLM smoke test k=0.6'),
+    ('C1', 'slm_sweep_k50_2gpu',                 'SLM sweep k=0.5'),
+    ('C2', 'slm_sweep_k70_2gpu',                 'SLM sweep k=0.7'),
+    ('C3', 'slm_sweep_k80_2gpu',                 'SLM sweep k=0.8'),
+    ('D',  'sp8192_combo_slim_slm_2gpu',         'SP8192 combo slim + SLM'),
+    ('E',  'headwise_qkgain5_2gpu',              'Headwise + QK-Gain 5.0'),
+    ('F',  'leaky_relu2_2gpu',                   'LeakyReLU2 baseline'),
+    ('G',  'leaky_relu2_slm_k60_2gpu',           'LeakyReLU2 + SLM k=0.6'),
+    ('H',  'sp8192_combo_slim_nottt_2gpu',       'SP8192 combo slim no TTT'),
+    ('I',  'slm_sweep_k40_2gpu',                 'SLM sweep k=0.4'),
+    ('J',  'slm_sweep_k90_2gpu',                 'SLM sweep k=0.9'),
+    ('K',  'headwise_qkgain5_slm_k60_2gpu',     'Headwise+QKG5 + SLM k=0.6'),
+    ('L',  'leaky_relu2_headwise_slm_k60_2gpu',  'LReLU2+headwise+SLM k=0.6'),
 ]
 
 pg_dir = '$PG_DIR'
