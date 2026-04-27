@@ -40,14 +40,28 @@ This project investigates efficient language model training under extreme compre
 
 ## Getting Started
 
-### 1. Clone the repository
+### Quickstart (recommended)
+
+Clone and run the best config in one go — handles deps, data download, and GPU detection automatically:
+
+```bash
+git clone --recurse-submodules https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+bash runs/quickstart.sh
+```
+
+### Manual Setup
+
+If you want to run specific experiments instead of the quickstart:
+
+#### 1. Clone the repository
 
 ```bash
 git clone --recurse-submodules https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
 ```
 
-### 2. Install dependencies
+#### 2. Install dependencies
 
 Ensure you are running the latest version of PyTorch (2.6+) before installing project dependencies:
 
@@ -56,7 +70,7 @@ pip install --upgrade torch
 pip install -r parameter-golf/requirements.txt
 ```
 
-### 3. Choose an experiment config
+#### 3. Choose an experiment config
 
 Configs are `.env` files in `runs/configs/`, grouped by purpose:
 

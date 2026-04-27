@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------
+# FOR FIRST-TIME SETUP: use  bash runs/quickstart.sh  instead.
+# It handles deps, data download, and runs the best config automatically.
+# This file is for session-specific experiments only.
+# -----------------------------------------------------------------------
+#
 # Elementwise + MQA sweep — 2×H100 RunPod
 # 4 runs testing elementwise gated attention and MQA at reduced dims to fit 16 MB.
 
