@@ -136,6 +136,39 @@ Testing whether elementwise gated attention and MQA can fit under 16 MB at reduc
 
 **Naive Baseline:** 1.2244 BPB — 9L, 512 dim, 1024 vocab, tied embeddings, 4 KV heads, int8+zlib.
 
+### Session 9 — GPTQ Validation (2×H100, SP8192, 2026-04-27)
+
+Ported full GPTQ from PG rank 9 (Marko Sisovic). Algorithm: Frantar et al., "GPTQ", ICLR 2023. AR self-gen calibration (64 × 2048, no training data at eval time).
+
+**First GPTQ run** (headwise dim=448, 5-percentile clip search, int6, AR self-gen):
+
+| Metric | Value | Expected |
+|--------|-------|----------|
+| Pre-quant BPB | 1.2388 | — |
+| Post-GPTQ int6 BPB (roundtrip) | 1.3450 | ~1.25 |
+| Post-GPTQ int6 BPB (TTT) | **1.2929** | ~1.24 |
+| GPTQ gap (roundtrip) | **+0.1062** | +0.01 |
+| GPTQ gap (after TTT) | **+0.0541** | +0.002 |
+| Artifact size | **10.50 MB** | ~10 MB |
+| GPTQ calibration time | 117.6s | ~30s |
+
+**Size is excellent** (10.50 MB, 5.5 MB headroom). **BPB gap is 10× worse than expected.** Kevin Clark (rank 5) gets +0.012 gap; we get +0.106. TTT partially rescued it (1.3450 → 1.2929) but that's TTT compensating for bad quantization.
+
+**Bugs found and fixed:**
+1. `torch.inference_mode()` in Hessian collection created "inference tensors" that poisoned the Rotary cos/sin cache, crashing TTT. Fixed by adding `.clone()` to Rotary output. Root cause: `inference_mode` creates permanently tainted tensors unlike `no_grad`. Kevin Clark uses `no_grad` — switching to match.
+2. The 5-percentile clip search (rank 9/10 approach) runs GPTQ 5× per matrix. Kevin Clark uses `k × std(row)` single pass — same Cholesky error compensation, 5× faster, and directly controls compressed size (his README has the mathematical proof).
+
+**Decompressed Kevin Clark's rank 5 code** (LZMA + base85 encoded, 416 lines). Key differences from our rank 9 port:
+- Uses `torch.no_grad()` not `inference_mode()` — avoids the Rotary crash entirely
+- Uses `clip_range=63` (int7) with `k=12.85` — same compressed size as int6, less clipping error
+- Uses training data calibration (64 batches, ~5s) not AR self-gen (~120s)
+- Uses PyTorch `register_forward_hook` for Hessian collection instead of manual `_save_gptq` flags
+- Single GPTQ pass per matrix (k×std clip), not 5 passes (percentile search)
+
+**Next: GPTQ benchmark sweep** — testing 4 combinations (int6/int7 × AR/train) with the updated code (no_grad + k×std clipping). See `runs/run_gptq_benchmark_2gpu.sh`.
+
+---
+
 **Current SOTA:** 1.0810 BPB — SP8192 + 3-layer recurrence + parallel residuals + QK-Gain 5.25 + legal score-first TTT (bigbag, 2026-04-09).
 
 ### Official Leaderboard (as of 2026-04-09)

@@ -54,24 +54,19 @@ if not all_ok:
     sys.exit(1)
 "
 
-# === 5. Run GPTQ validation (smoke + main, ~25 min total) ===
-# Runs two experiments automatically:
-#   SMOKE: Headwise dim=448 + GPTQ (known-good config, validates pipeline)
-#   MAIN:  Elementwise dim=512 + GPTQ (primary target)
-# Auto-checks smoke test results before proceeding to main.
-# See runs/run_gptq_2gpu.sh for details.
-bash runs/run_gptq_2gpu.sh
+# === 5. Run GPTQ benchmark (4 variants, ~90 min total) ===
+# Tests 4 GPTQ configurations to find best match for our model:
+#   G1: int7 (clip=63) + AR self-gen
+#   G2: int7 (clip=63) + training data
+#   G3: int6 (clip=31) + AR self-gen
+#   G4: int6 (clip=31) + training data
+# All use k×std clipping (Kevin Clark) + no_grad (not inference_mode).
+# See runs/run_gptq_benchmark_2gpu.sh for details.
+bash runs/run_gptq_benchmark_2gpu.sh
 
 # === Expected output ===
 #
-# SMOKE (headwise dim=448 GPTQ):
-#   gptq:done in ~25s, 54 Hessians collected
-#   gptq_quantize: 54 GPTQ layers, 0 naive layers
-#   Serialized model int6+brotli: ~9-10 MB
-#   BPB gap vs int8: ~+0.01 (naive was +0.19)
-#
-# MAIN (elementwise dim=512 GPTQ):
-#   Serialized model int6+brotli: ~10-11 MB (under 16 MB)
-#   BPB: ~1.22-1.23 (2×H100), projected ~1.18-1.19 (8×H100)
-#
-# PASS: GPTQ gap < 0.02, size < 16 MB → run on 8×H100
+# Summary table with Pre-Q BPB, Roundtrip BPB, TTT BPB, Gap vs Run A, Size, GPTQ time
+# for all 4 variants. Winner = lowest TTT BPB under 16 MB.
+# Reference: Run A (int8, no GPTQ) = 1.2411 BPB
+# Previous GPTQ (5-pct, int6, AR, old code) = 1.2929 BPB (TTT), gap +0.0518

@@ -118,15 +118,15 @@ if m:
 else:
     print(f'  {chr(10007)} Size: NOT FOUND')
 
-# 4. GPTQ layer count
-m = re.search(r'gptq_quantize: (\d+) GPTQ layers, (\d+) naive', log)
+# 4. GPTQ Hessians collected
+m = re.search(r'gptq:done in [\d.]+s, (\d+) Hessians collected', log)
 if m:
-    gptq_n, naive_n = int(m.group(1)), int(m.group(2))
-    ok = gptq_n > 0
-    print(f'  {chr(10003) if ok else chr(10007)} GPTQ layers: {gptq_n} GPTQ, {naive_n} naive')
+    n_hess = int(m.group(1))
+    ok = n_hess > 0
+    print(f'  {chr(10003) if ok else chr(10007)} GPTQ Hessians: {n_hess} collected')
     if ok: passed += 1
 else:
-    print(f'  {chr(10007)} GPTQ layers: NOT FOUND')
+    print(f'  {chr(10007)} GPTQ Hessians: NOT FOUND')
 
 print(f'\nSmoke test: {\"PASS\" if passed == total else \"FAIL\"} ({passed}/{total})')
 if passed < total:

@@ -118,6 +118,8 @@ class Hyperparameters:
     gptq_temperature = float(os.environ.get("GPTQ_TEMPERATURE", "0.8"))
     gptq_batch_size = int(os.environ.get("GPTQ_BATCH_SIZE", "8"))
     gptq_reserve_ms = float(os.environ.get("GPTQ_RESERVE_MS", "30000"))
+    gptq_clip_range = int(os.environ.get("GPTQ_CLIP_RANGE", "63"))  # 31=int6, 63=int7 (Kevin Clark rank 5)
+    gptq_calib_source = os.environ.get("GPTQ_CALIB_SOURCE", "ar")  # "ar" = AR self-gen, "train" = training data
 
     # Test-Time Training (Score-First TTT, PG ranks 1-3)
     # "none" = disabled (baseline), "score_first" = legal score-before-update TTT
@@ -646,15 +648,20 @@ def quantize_int6_per_row(t: Tensor, clip_range: int = 31) -> tuple[Tensor, Tens
     q = torch.clamp(torch.round(t32 / scale.float()), -clip_range, clip_range).to(torch.int8)
     return q, scale
 
-def gptq_quantize_weight(W: Tensor, H: Tensor, clip_range: int = 31,
-                         block_size: int = 128, percdamp: float = 0.01) -> tuple[Tensor, Tensor]:
+def gptq_quantize_weight(W: Tensor, H: Tensor, clip_range: int = 63,
+                         clip_sigmas: float = 12.85, block_size: int = 128,
+                         percdamp: float = 0.01) -> tuple[Tensor, Tensor]:
     """GPTQ column-by-column quantization with Hessian error compensation.
+
+    Uses k×std clipping (Kevin Clark, rank 5) instead of multi-percentile search:
+      scale = clip_sigmas × std(row) / clip_range
+    Single GPTQ pass (5× faster), directly controls compressed size via k.
 
     For each column j in weight matrix W (reordered by Hessian diagonal):
       1. Quantize column j: q_j = round(w_j / scale)
       2. Compute error: err_j = (w_j - q_j * scale) / H_inv[j,j]
       3. Compensate remaining columns: W[:, j+1:] -= err_j * H_inv[j, j+1:]
-    This minimizes total reconstruction error ||WX - QX||² (Frantar et al., ICLR 2023).
+    Algorithm: Frantar et al., ICLR 2023. Clipping: Kevin Clark, PG rank 5.
     """
     W_orig = W.float().clone()
     rows, cols = W_orig.shape
@@ -677,39 +684,31 @@ def gptq_quantize_weight(W: Tensor, H: Tensor, clip_range: int = 31,
         Hinv = torch.linalg.cholesky(Hinv, upper=True)
     except torch.linalg.LinAlgError:
         return quantize_int6_per_row(W_orig, clip_range)
-    # Search over clip percentiles, pick lowest reconstruction MSE
-    best_q, best_scale, best_err = None, None, float("inf")
-    for pct in [0.999, 0.9995, 0.9999, 0.99999, 1.0]:
-        if pct < 1.0:
-            row_clip = torch.quantile(W_orig.abs(), pct, dim=1)
-        else:
-            row_clip = W_orig.abs().amax(dim=1)
-        s = (row_clip / clip_range).clamp_min(1.0 / clip_range).to(torch.float16)
-        sf = s.float()
-        Q = torch.zeros(rows, cols, dtype=torch.int8)
-        W_work = W_perm.clone()
-        for i1 in range(0, cols, block_size):
-            i2 = min(i1 + block_size, cols)
-            W_block = W_work[:, i1:i2].clone()
-            Hinv_block = Hinv[i1:i2, i1:i2]
-            Err = torch.zeros(rows, i2 - i1)
-            for j in range(i2 - i1):
-                w_col = W_block[:, j]
-                d = Hinv_block[j, j]
-                q_col = torch.clamp(torch.round(w_col / sf), -clip_range, clip_range)
-                Q[:, i1 + j] = q_col.to(torch.int8)
-                err = (w_col - q_col.float() * sf) / d
-                Err[:, j] = err
-                W_block[:, j:] -= err.unsqueeze(1) * Hinv_block[j, j:].unsqueeze(0)
-            if i2 < cols:
-                W_work[:, i2:] -= Err @ Hinv[i1:i2, i2:]
-        recon = Q.float() * sf[:, None]
-        mse = (W_perm - recon).pow(2).mean().item()
-        if mse < best_err:
-            best_q, best_scale, best_err = Q, s, mse
+    # k×std clipping: scale = clip_sigmas × std(row) / clip_range
+    # Directly controls entropy/compression tradeoff (Kevin Clark, PG rank 5 README).
+    row_std = W_orig.std(dim=1)
+    s = (clip_sigmas * row_std / clip_range).clamp_min(1e-10).to(torch.float16)
+    sf = s.float()
+    Q = torch.zeros(rows, cols, dtype=torch.int8)
+    W_work = W_perm.clone()
+    for i1 in range(0, cols, block_size):
+        i2 = min(i1 + block_size, cols)
+        W_block = W_work[:, i1:i2].clone()
+        Hinv_block = Hinv[i1:i2, i1:i2]
+        Err = torch.zeros(rows, i2 - i1)
+        for j in range(i2 - i1):
+            w_col = W_block[:, j]
+            d = Hinv_block[j, j]
+            q_col = torch.clamp(torch.round(w_col / sf), -clip_range, clip_range)
+            Q[:, i1 + j] = q_col.to(torch.int8)
+            err = (w_col - q_col.float() * sf) / d
+            Err[:, j] = err
+            W_block[:, j:] -= err.unsqueeze(1) * Hinv_block[j, j:].unsqueeze(0)
+        if i2 < cols:
+            W_work[:, i2:] -= Err @ Hinv[i1:i2, i2:]
     # Un-permute columns back to original order
-    best_q = best_q[:, invperm]
-    return best_q, best_scale
+    Q = Q[:, invperm]
+    return Q, s
 
 
 def generate_autoregressive_calib(
@@ -802,7 +801,9 @@ def gptq_collect_hessians_from_tokens(
         block.mlp._save_gptq = True
     was_training = model.training
     model.eval()
-    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    # Use no_grad (not inference_mode) — inference_mode creates special tensors that
+    # poison the Rotary cache and crash TTT. Kevin Clark rank 5 uses no_grad for this reason.
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         for seq in token_seqs:
             x = seq[:, :-1].to(device=device, dtype=torch.int64)
             y = seq[:, 1:].to(device=device, dtype=torch.int64)
@@ -913,6 +914,7 @@ def dequantize_state_dict_int8(obj: dict[str, object]) -> dict[str, Tensor]:
 def quantize_state_dict_int6_sdclip(
     state_dict: dict[str, Tensor], sdclip_k: float, embed_clip_k: float,
     hessians: dict[str, Tensor] | None = None,
+    gptq_clip_range: int = 63, gptq_clip_sigmas: float = 12.85,
 ):
     """Int6 SDClip quantization. When hessians provided, uses GPTQ for 2D weight matrices."""
     quantized: dict[str, Tensor] = {}
@@ -953,7 +955,7 @@ def quantize_state_dict_int6_sdclip(
             quant_bits[name] = 8
         elif hessians is not None and name in hessians and t.ndim == 2:
             # GPTQ path: use Hessian-based error compensation (Frantar et al., ICLR 2023)
-            q, s = gptq_quantize_weight(t, hessians[name].cpu(), clip_range=31)
+            q, s = gptq_quantize_weight(t, hessians[name].cpu(), clip_range=gptq_clip_range, clip_sigmas=gptq_clip_sigmas)
             quant_bits[name] = 6
             gptq_count += 1
         else:
@@ -1891,25 +1893,55 @@ def main() -> None:
         log0(f"Code size: {code_bytes} bytes")
         log0(f"Total submission size: {model_bytes + code_bytes} bytes")
 
-    # GPTQ calibration: generate data → collect Hessians → pass to quantizer
-    # Ported from PG rank 9 (Marko Sisovic). Algorithm: Frantar et al., ICLR 2023.
+    # GPTQ calibration: collect Hessians → pass to quantizer
+    # Algorithm: Frantar et al., ICLR 2023. Clipping: Kevin Clark, PG rank 5.
     gptq_hessians = None
     if args.use_gptq and use_int6:
         t_gptq = time.perf_counter()
-        log0(f"gptq:starting AR self-generation ({args.gptq_ar_samples} seqs × {args.gptq_ar_seqlen} tokens)")
-        calib_seqs = generate_autoregressive_calib(
-            base_model, device,
-            num_seqs=args.gptq_ar_samples,
-            seq_len=args.gptq_ar_seqlen,
-            vocab_size=args.vocab_size,
-            temperature=args.gptq_temperature,
-            batch_size=args.gptq_batch_size,
-            seed=args.seed,
-        )
-        log0(f"gptq:AR generated {len(calib_seqs)} sequences in {time.perf_counter() - t_gptq:.1f}s")
-        log0(f"gptq:collecting Hessians from {len(calib_seqs)} calibration sequences...")
-        gptq_hessians = gptq_collect_hessians_from_tokens(base_model, calib_seqs, device)
-        del calib_seqs
+        log0(f"gptq:calib_source={args.gptq_calib_source} clip_range={args.gptq_clip_range} sdclip_k={args.sdclip_k}")
+        if args.gptq_calib_source == "train":
+            # Training data calibration (Kevin Clark rank 5 approach, ~5s)
+            log0(f"gptq:collecting Hessians from {args.gptq_ar_samples} training batches...")
+            calib_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
+            hessians = _gptq_init_hessians(base_model, device)
+            for block in base_model.blocks:
+                block.attn._save_gptq = True
+                block.mlp._save_gptq = True
+            base_model.eval()
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                for _ in range(args.gptq_ar_samples):
+                    x, y = calib_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
+                    base_model(x, y)
+                    _gptq_accum_hessians(hessians, base_model)
+            for block in base_model.blocks:
+                block.attn._save_gptq = False
+                block.mlp._save_gptq = False
+                for attr in ("_gptq_qkv_in", "_gptq_o_in"):
+                    if hasattr(block.attn, attr):
+                        delattr(block.attn, attr)
+                for attr in ("_gptq_up_in", "_gptq_down_in"):
+                    if hasattr(block.mlp, attr):
+                        delattr(block.mlp, attr)
+            _gptq_finalize_hessians(hessians, args.gptq_ar_samples)
+            base_model.train()
+            gptq_hessians = hessians
+            del calib_loader
+        else:
+            # AR self-generation calibration (rank 9/10 approach, ~120s)
+            log0(f"gptq:starting AR self-generation ({args.gptq_ar_samples} seqs × {args.gptq_ar_seqlen} tokens)")
+            calib_seqs = generate_autoregressive_calib(
+                base_model, device,
+                num_seqs=args.gptq_ar_samples,
+                seq_len=args.gptq_ar_seqlen,
+                vocab_size=args.vocab_size,
+                temperature=args.gptq_temperature,
+                batch_size=args.gptq_batch_size,
+                seed=args.seed,
+            )
+            log0(f"gptq:AR generated {len(calib_seqs)} sequences in {time.perf_counter() - t_gptq:.1f}s")
+            log0(f"gptq:collecting Hessians from {len(calib_seqs)} calibration sequences...")
+            gptq_hessians = gptq_collect_hessians_from_tokens(base_model, calib_seqs, device)
+            del calib_seqs
         gptq_elapsed = time.perf_counter() - t_gptq
         log0(f"gptq:done in {gptq_elapsed:.1f}s, {len(gptq_hessians)} Hessians collected")
         torch.cuda.empty_cache()
@@ -1918,6 +1950,7 @@ def main() -> None:
         quant_obj, quant_stats = quantize_state_dict_int6_sdclip(
             base_model.state_dict(), args.sdclip_k, args.embed_clip_k,
             hessians=gptq_hessians,
+            gptq_clip_range=args.gptq_clip_range, gptq_clip_sigmas=args.sdclip_k,
         )
         dequant_fn = dequantize_state_dict_int6
     else:
