@@ -41,7 +41,7 @@ import sys
 with open('parameter-golf/train_gpt.py') as f:
     code = f.read()
 checks = {
-    'no_grad (not inference_mode)': 'torch.no_grad()' in code and 'gptq' in code.split('torch.no_grad()')[0][-200:],
+    'no_grad (not inference_mode)': 'torch.no_grad()' in code and 'gptq_collect_hessians' in code,
     'clip_sigmas param': 'clip_sigmas' in code,
     'GPTQ_CLIP_RANGE env': 'GPTQ_CLIP_RANGE' in code,
     'GPTQ_CALIB_SOURCE env': 'GPTQ_CALIB_SOURCE' in code,
