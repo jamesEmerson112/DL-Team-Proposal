@@ -17,6 +17,7 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------------------|---------|
+| 13† | **SP8192 combo slim + SLM k=0.8 + TTT** | 16.36M | 3.1990 | **1.2384** | 2,749 | 218ms | 15.09 MB | Yes |
 | 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
 | 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | 15.77 MB | Yes |
 | 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB | Yes |
@@ -28,7 +29,7 @@
 | 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step).**
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Run 13: SP8192 + SLM k=0.8 (2026-04-26).**
 
 > **Note:** Run 1 (2026-04-16) excluded — ran on 1×GPU (old pod, PyTorch 2.4.1), completed only 1,819 steps. Result (1.3045 BPB) is not comparable. Run 12 was an accidental vanilla baseline (config source failed, intended as SP8192 combo slim).
 

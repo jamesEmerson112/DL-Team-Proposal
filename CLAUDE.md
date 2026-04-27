@@ -119,3 +119,21 @@ This is a **research-only repository** — no code implementation. Work products
 - [edit] Sorted paper survey table in `docs/parameter-golf/neurlps-paper-survey.md` by year (2026→2023), kept original # numbers for reference stability
 - [note] Paper #15 (Small Batch Size Training) flagged as low-hanging fruit — just remove grad_accum_steps + tune beta2, no code change needed. Keeping in mind for later.
 - [finding] TTT (Test-Time Training) is NOT from a paper in our survey — it's a practitioner-developed eval-time trick from the PG competition (attributed to @dexhunter PR #1413)
+
+### 2026-04-26 (Session 6)
+- [bugfix] Fixed NGPUS bug in `run_all_2gpu.sh` — config files were overwriting `NGPUS=2` to `NGPUS=1` via `source`. Fix: removed `export NGPUS=` from all 15 .env configs. Baseline scripts have safe fallbacks (`NGPUS="${NGPUS:-1}"`)
+- [feat] Expanded `runs/run_all_2gpu.sh` from 6 to 14 runs (added E-L: headwise+QKG5, LeakyReLU², combos with SLM, SP8192 no-TTT ablation, extended SLM sweep k=0.4/0.9)
+- [feat] Created 6 new .env configs: `leaky_relu2_slm.env`, `sp8192_combo_slim_nottt.env`, `slm_sweep_40.env`, `slm_sweep_90.env`, `headwise_qkgain5_slm.env`, `leaky_relu2_headwise_slm.env`
+- [run] Executed 14-run sweep on 2×H100 + 1 baseline confirm + 1 money shot (16 total runs)
+- [run] Baseline confirm: 1.2659 BPB, 171ms step_avg, 3,508 steps — matches old pods exactly
+- [finding] SP8192 dominates: all SP8192 runs (1.238-1.243) beat every SP1024 run (1.289+) by ~0.05 BPB
+- [finding] SLM k=0.8 is optimal ratio from sweep (k=0.4 to 0.9)
+- [finding] SLM improves SP8192 combo: Run A (no SLM) 1.2411 → Run D (SLM k=0.6) 1.2396 → Run 13 (SLM k=0.8) **1.2384** — new best 2×H100 run
+- [finding] TTT contributes ~0.002 BPB on 2×H100 (Run A 1.2411 vs Run H no-TTT 1.2432)
+- [finding] Techniques stack on SP1024: L (LReLU²+headwise+SLM) 1.2899 > F (LReLU² only) 1.2932
+- [finding] Projected 8×H100 with SLM k=0.8: ~1.2050 BPB (from Run 11's 1.2077 - 0.0027 SLM delta)
+- [edit] Updated `docs/James_test/run12_2gpu_commands.txt` — replaced old runs A-D with single "money shot" run (SP8192 combo slim + SLM k=0.8)
+- [edit] Added Run 13 (1.2384 BPB) to `docs/parameter-golf/findings.md` 2×H100 table
+- [feat] Created `docs/James_test/pg_grant_application.txt` — PG Development grant ($500) application with 3 fields: approach (1,500 chars), tried so far (255 chars), PR link
+- [ref] PR submission: https://github.com/openai/parameter-golf/pull/1799
+- [user] User is An Thien Vo, Georgia Tech grad student, CS 7643 Deep Learning. Spent $240+ personal funds on PG experiments.
