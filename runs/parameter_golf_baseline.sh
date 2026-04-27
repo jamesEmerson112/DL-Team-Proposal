@@ -220,6 +220,7 @@ ttt_mode = os.environ.get('TTT_MODE', 'none')
 quant_mode = os.environ.get('QUANT_MODE', 'int8_zlib')
 slm_enabled = os.environ.get('SLM_ENABLED', '0')
 slm_ratio = os.environ.get('SLM_RATIO', '0.6')
+use_gptq = os.environ.get('USE_GPTQ', '0')
 vocab_size = os.environ.get('VOCAB_SIZE', '1024')
 ngpus = '${NGPUS}'
 
@@ -236,6 +237,9 @@ if int8_loss == '?':
 int8_bpb = find(r'final_int6_brotli_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
 if int8_bpb == '?':
     int8_bpb = find(r'final_int8_zlib_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+
+# GPTQ timing (if enabled)
+gptq_time = find(r'gptq:done in ([\d.]+)s')
 
 # TTT results (if enabled) — try int6 first, then int8
 ttt_loss = find(r'final_int6_ttt_exact val_loss:([\d.]+)')
@@ -268,6 +272,7 @@ print(f'  ttt_mode:     {ttt_mode}')
 print(f'  quant_mode:   {quant_mode}')
 print(f'  slm_enabled:  {slm_enabled}')
 print(f'  slm_ratio:    {slm_ratio}')
+print(f'  use_gptq:     {use_gptq}')
 print(f'  vocab_size:   {vocab_size}')
 print(f'  steps:        {last_step}/{total_steps}')
 print(f'  step_avg:     {step_avg} ms')
@@ -278,6 +283,8 @@ print(f'  val_loss_int8:{int8_loss}')
 print(f'  val_bpb_int8: {int8_bpb}')
 print(f'  size_int8:    {comp_mb} MB')
 print(f'  under_budget: {budget_ok}')
+if gptq_time != '?':
+    print(f'  gptq_time:    {gptq_time}s')
 if ttt_bpb != '?':
     print(f'  val_loss_ttt: {ttt_loss}')
     print(f'  val_bpb_ttt:  {ttt_bpb}')

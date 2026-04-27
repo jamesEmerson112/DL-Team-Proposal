@@ -1,23 +1,24 @@
 # -----------------------------------------------------------------------
-# FOR FIRST-TIME SETUP: use  bash runs/quickstart.sh  instead.
-# It handles deps, data download, and runs the best config automatically.
-# This file is for session-specific experiments only.
-# -----------------------------------------------------------------------
+# GPTQ Elementwise dim=512 — 2×H100 RunPod
 #
-# Int6 SDClip + Elementwise dim sweep — 2×H100 RunPod
-# 3 runs testing int6+brotli quantization (PG ranks 1-9) with elementwise
-# at dim=448, 480, 512 to find the sweet spot under 16 MB.
-# E1 (int8+zlib, dim=448) was 1.2338 BPB but 16.67 MB (over by 0.67 MB).
-# Int6+brotli should save ~25% on artifact size.
+# Tests full GPTQ (Frantar et al., ICLR 2023) ported from PG rank 9.
+# Naive int6 destroyed BPB (+0.19 gap). GPTQ should shrink it to ~+0.01.
+# Elementwise dim=512 was best pre-quant BPB but busted budget with int8.
+# GPTQ int6 should fit ~10 MB AND preserve quality.
+#
+# Key configs:
+#   sp8192_elementwise_gptq_dim512.env  — PRIMARY: elem dim=512 + GPTQ
+#   sp8192_combo_slim_gptq.env          — CONTROL: headwise dim=448 + GPTQ
+# -----------------------------------------------------------------------
 
-# === 1. Setup (skip if already done) ===
+# === 1. Setup ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
 git fetch origin
 git checkout James-experiment
 git pull origin James-experiment
 
-# === 2. Install deps (skip if already done) ===
+# === 2. Install deps ===
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -31,11 +32,83 @@ MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fi
 
 cd ..
 
-# === 4. Run int6 sweep (3 runs, ~30 min) ===
-bash runs/run_int6_sweep_2gpu.sh
+# === 4. Preflight — verify GPTQ code is present ===
+python3 -c "
+import sys
+sys.path.insert(0, 'parameter-golf')
+with open('parameter-golf/train_gpt.py') as f:
+    code = f.read()
+checks = {
+    'gptq_quantize_weight': 'gptq_quantize_weight' in code,
+    '_save_gptq hooks': '_save_gptq' in code,
+    '_byte_shuffle': '_byte_shuffle' in code,
+    'generate_autoregressive_calib': 'generate_autoregressive_calib' in code,
+    'USE_GPTQ env var': 'USE_GPTQ' in code,
+}
+all_ok = all(checks.values())
+for name, ok in checks.items():
+    print(f'  {\"✓\" if ok else \"✗\"} {name}')
+print(f'\nPreflight: {\"PASS\" if all_ok else \"FAIL\"} ({sum(checks.values())}/{len(checks)} checks)')
+if not all_ok:
+    print('ERROR: GPTQ code not found. Did you pull the latest branch?')
+    sys.exit(1)
+"
+
+# === 5. SMOKE TEST — Headwise dim=448 + GPTQ (known-good config, ~12 min) ===
+# Verifies GPTQ pipeline works end-to-end before running the big experiment.
+# Compare to Run 11 (1.2077 on 8×H100) / Run A (1.2411 on 2×H100, int8+zlib).
+# PASS: no crash, BPB gap < 0.02 vs int8, GPTQ time < 60s
+source runs/configs/sp8192_combo_slim_gptq.env
+echo "VERIFY: USE_GPTQ=$USE_GPTQ QUANT_MODE=$QUANT_MODE GATED_ATTN=$GATED_ATTN MODEL_DIM=$MODEL_DIM"
+export NGPUS=2
+export RUN_ID=sp8192_combo_slim_gptq_2gpu
+bash runs/parameter_golf_baseline.sh
+
+# Check smoke test results before continuing:
+echo ""
+echo "=== SMOKE TEST CHECKLIST ==="
+echo "1. Did GPTQ calibration complete? Look for 'gptq:done in Xs' in log"
+echo "2. Is BPB gap small? Compare final_int6_brotli_roundtrip BPB to Run A (1.2411)"
+echo "3. Is artifact under 16 MB? Look for 'Serialized model int6+brotli: X bytes'"
+echo "4. Did TTT run on the quantized model? Look for 'final_int6_ttt' line"
+echo ""
+echo "If all 4 pass, proceed to the main experiment below."
+echo "If GPTQ crashed, check logs/sp8192_combo_slim_gptq_2gpu.txt for errors."
+echo ""
+
+# === 6. MAIN EXPERIMENT — Elementwise dim=512 + GPTQ (~12 min) ===
+# This is the PRIMARY TARGET. Full dim=512 model with GPTQ error compensation.
+# E1 (int8, elem dim=448) was 1.2338 BPB, 16.67 MB (over budget).
+# dim=512 has more params → better pre-quant BPB.
+# GPTQ int6 should compress to ~10 MB → well under 16 MB.
+# Expected post-GPTQ BPB: ~1.22-1.23 (on 2×H100), ~1.18-1.19 (on 8×H100).
+source runs/configs/sp8192_elementwise_gptq_dim512.env
+echo "VERIFY: USE_GPTQ=$USE_GPTQ QUANT_MODE=$QUANT_MODE GATED_ATTN=$GATED_ATTN MODEL_DIM=$MODEL_DIM"
+export NGPUS=2
+export RUN_ID=sp8192_elem_gptq_dim512_2gpu
+bash runs/parameter_golf_baseline.sh
 
 # === Expected output ===
-# I1: Elem dim=448 int6  → should fit (~12.5 MB), compare BPB to E1 (1.2338)
-# I2: Elem dim=480 int6  → bigger model, should fit (~14 MB)
-# I3: Elem dim=512 int6  → full dim, should fit (~13.4 MB), best BPB potential
-# Winner = lowest BPB that fits under 16 MB → goes to 8×H100
+#
+# SMOKE (headwise dim=448 GPTQ):
+#   gptq:starting AR self-generation (64 seqs × 2048 tokens)
+#   gptq:AR generated 64 sequences in ~15s
+#   gptq:collecting Hessians from 64 calibration sequences...
+#   gptq:done in ~25s, 54 Hessians collected
+#   gptq_quantize: 54 GPTQ layers, 0 naive layers
+#   Serialized model int6+brotli: ~9-10 MB (well under 16 MB)
+#   final_int6_brotli_roundtrip BPB: ~1.24-1.25 (gap ~+0.01 vs int8)
+#   final_int6_ttt BPB: ~1.24-1.25
+#
+# MAIN (elementwise dim=512 GPTQ):
+#   Same GPTQ flow as above
+#   Serialized model int6+brotli: ~10-11 MB (under 16 MB)
+#   final_int6_brotli_roundtrip BPB: ~1.22-1.23
+#   final_int6_ttt BPB: ~1.22-1.23
+#
+# PASS criteria:
+#   1. GPTQ completes without crash
+#   2. GPTQ gap < 0.02 BPB (naive was +0.19)
+#   3. Artifact size < 16 MB
+#   4. BPB competitive with Run A (1.2411) or better
+#   If PASS → run on 8×H100 for final submission
