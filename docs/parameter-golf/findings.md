@@ -29,11 +29,15 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------------------|---------|
+| E1† | Elementwise dim=448 GQA | ~16.4M | — | **1.2338** | 2,644 | — | 16.67 MB | **No** |
 | 13†‡ | SP8192 combo slim + TTT (re-run) | 16.36M | 3.1990 | 1.2384 | 2,749 | 218ms | 15.09 MB | Yes |
 | D†‡ | SP8192 combo slim + TTT (re-run) | 16.36M | 3.2021 | 1.2396 | 2,652 | 226ms | 15.08 MB | Yes |
 | A† | SP8192 combo slim + TTT | 16.36M | 3.2059 | 1.2411 | 2,572 | 233ms | 15.03 MB | Yes |
 | H† | SP8192 combo slim (no TTT) | 16.36M | 3.2112 | 1.2432 | 2,541 | 236ms | 15.04 MB | Yes |
+| E2† | Elementwise dim=416 GQA | ~14.6M | — | 1.2447 | 2,772 | — | 14.68 MB | Yes |
+| E3† | MQA dim=448 headwise | ~14.3M | — | 1.2509 | 2,979 | — | 14.32 MB | Yes |
 | 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
+| E4† | MQA + Elementwise dim=416 | ~14.0M | — | 1.2601 | 2,982 | — | 14.02 MB | Yes |
 | 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | 15.77 MB | Yes |
 | 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB | Yes |
 | 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | 15.77 MB | Yes |
@@ -44,7 +48,7 @@
 | 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26.**
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep).**
 
 **‡ SLM INVALID:** Runs D and 13 originally claimed SLM, but the RunPod had commit `d7af1ec` (Apr 23) which predates the SLM code push (Apr 26 7:18 PM). `SLM_ENABLED` env var was set but ignored — the code to use it didn't exist yet. BPB values are valid as additional Run A repeats (SP8192 combo slim + TTT). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise). **SLM validated in Session 7 — confirmed harmful, see below.**
 
@@ -108,6 +112,31 @@ First real SLM runs with working code. Preflight check verified `slm_enabled` in
 **Conclusion: SLM is harmful at 17M scale.** Every ratio tested (k=0.6 to k=0.95) produces worse BPB than the no-SLM baseline. The damage decreases as k approaches 1.0 (fewer tokens dropped), but never reaches parity. Even dropping just 5% of tokens (k=0.95) hurts by +0.0019 BPB.
 
 **Why it fails:** At 17M params, the model hasn't learned common patterns well enough to afford skipping any tokens. The Rho-1 paper's results on 1B+ models don't transfer — small models need every gradient signal available in a 10-minute window. Simple loss-threshold filtering (Option A) is too crude without a reference model to distinguish "learnable hard" from "unlearnable hard" tokens.
+
+### Session 8 — Elementwise + MQA Sweep (2×H100, SP8192, 2026-04-27)
+
+Testing whether elementwise gated attention and MQA can fit under 16 MB at reduced MODEL_DIM. Elementwise gave the best per-step BPB (Run 3, 1.2602) but busted budget at dim=512 (17.87 MB). MQA (Run 4) was also over at dim=512 (16.84 MB).
+
+**Sweep results** (SP8192 combo slim base, 2×H100):
+
+| Run | Config | val_bpb | Size (int8+zlib) | Budget? | vs Run A (1.2411) |
+|-----|--------|---------|-------------------|---------|-------------------|
+| **E1** | Elementwise dim=448 GQA | **1.2338** | 16.67 MB | **No (+0.67 MB)** | **-0.0073** |
+| E2 | Elementwise dim=416 GQA | 1.2447 | 14.68 MB | Yes | +0.0036 |
+| E3 | MQA dim=448 headwise | 1.2509 | 14.32 MB | Yes | +0.0098 |
+| E4 | MQA + Elementwise dim=416 | 1.2601 | 14.02 MB | Yes | +0.0190 |
+
+**No run passes** the dual criteria of beating Run A (1.2411) AND fitting under 16 MB.
+
+**Key findings:**
+
+1. **E1 is the best 2×H100 BPB ever (1.2338)** — beats Run A by 0.0073. But 16.67 MB, over budget by 0.67 MB. Tantalizingly close.
+2. **Elementwise quality collapses at dim=416** — E2 (1.2447) is worse than Run A (1.2411). The dim reduction from 448→416 costs more BPB than elementwise gains.
+3. **MQA confirmed worse on SP8192** — E3 (1.2509) is 0.0098 behind Run A. Fewer KV heads = worse quality, consistent with SP1024 result (Run 4).
+4. **Combos don't stack** — E4 (MQA + elementwise, 1.2601) is worst of all. MQA's quality loss overwhelms elementwise's gain at dim=416.
+5. **dim=432 untested** — could thread the needle between E1 (over budget) and E2 (under quality). 432 is divisible by 8 heads.
+
+**Leaderboard insight:** Top PG entries solve the size problem differently — they don't shrink MODEL_DIM. Instead they use **int6 quantization** (compressed size ~25% smaller than int8) and **depth recurrence** (loop layers 4-5 for more virtual depth with same param count). Both are architectural/compression improvements our pipeline doesn't have yet.
 
 ---
 
@@ -778,7 +807,8 @@ _Add entries as we discover things._
 
 | Technique | Expected impact | Actual result | Why it failed |
 |---|---|---|---|
-| Gated Attention (elementwise) | Better BPB than headwise | 1.2602 BPB but 17.87 MB (over budget) | +2.36M params makes compressed model too large. Marginal BPB gain (+0.005) not worth the cost. |
+| Gated Attention (elementwise) | Better BPB than headwise | Best BPB (1.2338 at dim=448) but 16.67 MB over budget; dim=416 fits but 1.2447 worse than Run A | Elementwise needs dim≥448 to beat headwise, but that's over 16 MB. Shrinking dim kills the gain. No sweet spot found. |
+| MQA on SP8192 | Faster inference, smaller model | 1.2509 BPB at dim=448 — 0.0098 worse than GQA (Run A) | Confirmed on SP8192 (Session 8) after SP1024 (Run 4). Fewer KV heads = worse quality at 17M scale. |
 | QK-Gain 5.0 (on SP1024) | Better attention scaling | 1.2719 BPB (worse than headwise 1.2653) | 15% slower steps (210ms vs 182ms), higher VRAM (13GB vs 10GB). QK-Gain 5.0 likely needs SP8192 to be effective. |
 | SLM / Rho-1 (all ratios) | Better per-step learning by filtering easy tokens | k=0.6: +0.155 BPB, k=0.8: +0.024, k=0.95: +0.002 — ALL worse than no-SLM | At 17M params, model needs every gradient signal. Rho-1 paper tested at 1B+; doesn't transfer down. Simple loss-threshold (Option A) too crude without reference model. Paper: "Not All Tokens Are What You Need" (NeurIPS 2024). |
 
@@ -794,6 +824,8 @@ _High-level takeaways that apply beyond the competition._
 6. **Techniques stack cleanly** — SP8192 + TTT + LeakyReLU² + headwise + QKG5 all combine without interference. Best 2×H100: 1.2411 BPB (Run A). *(SLM stacking claim retracted pending validation.)*
 7. **3-seed reproducibility confirmed** — SP8192 combo slim + TTT on 8×H100 gives mean 1.2073 BPB (std ±0.0006). Results are stable across random seeds.
 8. **Total cost: ~$240+ across 30+ experiments** — systematic ablation approach validated each technique individually before stacking.
+9. **Elementwise gated attention: best BPB but no budget-legal sweet spot** — E1 (dim=448, 1.2338) is the best 2×H100 BPB ever but 0.67 MB over. dim=416 fits but loses all quality gain. MQA also confirmed worse on SP8192.
+10. **Next frontier: int6 quantization and depth recurrence** — every top-9 PG entry uses depth recurrence (loop layers 4-5), and most use int6 GPTQ instead of int8+zlib. These would let us keep dim=512 (or elementwise at dim=448) under 16 MB.
 
 ## On Metric Choice & Goodhart's Law
 

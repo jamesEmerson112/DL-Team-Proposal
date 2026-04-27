@@ -131,8 +131,8 @@ import os, glob
 
 budget = 16_000_000  # 16 MB in bytes
 
-# Prefer int8+zlib compressed artifact (actual submission format)
-compressed = glob.glob('*.int8.ptz') + glob.glob('*.ptz')
+# Prefer compressed artifact (int6+brotli or int8+zlib)
+compressed = glob.glob('*.int6.ptb') + glob.glob('*.int8.ptz') + glob.glob('*.ptz')
 raw_weights = glob.glob('*.pt') + glob.glob('*.pth') + glob.glob('*.bin') + glob.glob('model.*')
 code_files = glob.glob('train_gpt*.py')
 
@@ -164,7 +164,7 @@ for f in sorted(set(code_files)):
 # Use compressed if available, otherwise raw
 if comp_total > 0:
     submission = comp_total + code_total
-    label = 'int8+zlib'
+    label = 'int6+brotli' if any('.int6.ptb' in f for f in compressed) else 'int8+zlib'
 else:
     submission = raw_total + code_total
     label = 'raw (no compressed artifact found)'
@@ -217,6 +217,7 @@ gated = os.environ.get('GATED_ATTN', 'none')
 activation = os.environ.get('ACTIVATION', 'relu2')
 qk_gain = os.environ.get('QK_GAIN_INIT', '1.5')
 ttt_mode = os.environ.get('TTT_MODE', 'none')
+quant_mode = os.environ.get('QUANT_MODE', 'int8_zlib')
 slm_enabled = os.environ.get('SLM_ENABLED', '0')
 slm_ratio = os.environ.get('SLM_RATIO', '0.6')
 vocab_size = os.environ.get('VOCAB_SIZE', '1024')
@@ -228,20 +229,31 @@ ngpus = '${NGPUS}'
 train_vals = re.findall(r'^step:\d+/\d+ val_loss:([\d.]+) val_bpb:([\d.]+)', text, re.MULTILINE)
 last_raw_loss = train_vals[-1][0] if train_vals else '?'
 last_raw_bpb = train_vals[-1][1] if train_vals else '?'
-int8_loss = find(r'final_int8_zlib_roundtrip_exact val_loss:([\d.]+)')
-int8_bpb = find(r'final_int8_zlib_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+# Roundtrip results — try int6 first, then int8
+int8_loss = find(r'final_int6_brotli_roundtrip_exact val_loss:([\d.]+)')
+if int8_loss == '?':
+    int8_loss = find(r'final_int8_zlib_roundtrip_exact val_loss:([\d.]+)')
+int8_bpb = find(r'final_int6_brotli_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+if int8_bpb == '?':
+    int8_bpb = find(r'final_int8_zlib_roundtrip_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
 
-# TTT results (if enabled)
-ttt_loss = find(r'final_int8_ttt_exact val_loss:([\d.]+)')
-ttt_bpb = find(r'final_int8_ttt_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+# TTT results (if enabled) — try int6 first, then int8
+ttt_loss = find(r'final_int6_ttt_exact val_loss:([\d.]+)')
+if ttt_loss == '?':
+    ttt_loss = find(r'final_int8_ttt_exact val_loss:([\d.]+)')
+ttt_bpb = find(r'final_int6_ttt_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
+if ttt_bpb == '?':
+    ttt_bpb = find(r'final_int8_ttt_exact val_loss:[\d.]+ val_bpb:([\d.]+)')
 
 # Find last step (use ^step: to exclude warmup_step: lines)
 steps = re.findall(r'^step:(\d+)/(\d+)', text, re.MULTILINE)
 last_step = steps[-1][0] if steps else '?'
 total_steps = steps[-1][1] if steps else '?'
 
-# Find compressed size
-comp_bytes = find(r'Serialized model int8\+zlib: (\d+) bytes')
+# Find compressed size — try int6+brotli first, then int8+zlib
+comp_bytes = find(r'Serialized model int6\+brotli: (\d+) bytes')
+if comp_bytes == '?':
+    comp_bytes = find(r'Serialized model int8\+zlib: (\d+) bytes')
 comp_mb = f'{int(comp_bytes)/1e6:.2f}' if comp_bytes != '?' else '?'
 
 budget_ok = 'YES' if comp_bytes != '?' and int(comp_bytes) + 120000 <= 16_000_000 else 'NO'
@@ -253,6 +265,7 @@ print(f'  gated_attn:   {gated}')
 print(f'  activation:   {activation}')
 print(f'  qk_gain_init: {qk_gain}')
 print(f'  ttt_mode:     {ttt_mode}')
+print(f'  quant_mode:   {quant_mode}')
 print(f'  slm_enabled:  {slm_enabled}')
 print(f'  slm_ratio:    {slm_ratio}')
 print(f'  vocab_size:   {vocab_size}')
