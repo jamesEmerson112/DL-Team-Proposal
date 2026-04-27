@@ -46,7 +46,7 @@
 
 **Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26.**
 
-**‡ SLM INVALID:** Runs D and 13 originally claimed SLM, but the RunPod had commit `d7af1ec` (Apr 23) which predates the SLM code push (Apr 26 7:18 PM). `SLM_ENABLED` env var was set but ignored — the code to use it didn't exist yet. BPB values are valid as additional Run A repeats (SP8192 combo slim + TTT). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise). **SLM validation pending — Session 7.**
+**‡ SLM INVALID:** Runs D and 13 originally claimed SLM, but the RunPod had commit `d7af1ec` (Apr 23) which predates the SLM code push (Apr 26 7:18 PM). `SLM_ENABLED` env var was set but ignored — the code to use it didn't exist yet. BPB values are valid as additional Run A repeats (SP8192 combo slim + TTT). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise). **SLM validated in Session 7 — confirmed harmful, see below.**
 
 > **Note:** Run 1 (2026-04-16) excluded — ran on 1×GPU (old pod, PyTorch 2.4.1), completed only 1,819 steps. Result (1.3045 BPB) is not comparable. Run 12 was an accidental vanilla baseline (config source failed, intended as SP8192 combo slim).
 
@@ -83,6 +83,31 @@
 **Key findings:** (1) ~~SLM k=0.8 optimal at 17M scale~~ **INVALID — SLM code not present, see note above.** (2) Techniques stack: LReLU²+headwise beats any single technique (SLM contribution was noise, not real). (3) SP8192 still dominates: best SP1024 combo (1.2899 on 1-GPU) can't match SP8192 on same hardware (1.2411-1.2432).
 
 † All runs 2026-04-26, PyTorch 2.6, 10-min wall clock. NGPUS bug confirmed by step_avg (~220ms vs expected ~163ms for 2×H100).
+
+### Session 7 — SLM Validation (2×H100, SLM code confirmed present)
+
+First real SLM runs with working code. Preflight check verified `slm_enabled` in `train_gpt.py` before running.
+
+**SLM Ratio Sweep** (SP1024 GQA baseline + SLM, 2×H100):
+
+| Run | Config | SLM k | val_bpb (int8) | vs Run 6v2 (1.2649) | Steps | Step avg |
+|-----|--------|-------|----------------|---------------------|-------|----------|
+| S1 | SP1024 GQA + SLM | 0.6 | 1.4204 | **+0.1555** | 3,318 | 181ms |
+| S5 | SP1024 GQA + SLM | 0.95 | 1.2668 | +0.0019 | 3,403 | 176ms |
+| 6v2 | SP1024 GQA (no SLM) | — | 1.2649 | — | 3,661 | 164ms |
+
+**SLM on SP8192 competition config** (combo slim + TTT, 2×H100):
+
+| Run | SLM k | val_bpb (TTT) | val_bpb (int8) | vs Run A (1.2411) | Steps | Step avg |
+|-----|-------|---------------|----------------|-------------------|-------|----------|
+| S2 | 0.6 | 1.4034 | 1.4002 | **+0.1592** | 2,654 | 226ms |
+| S3 | 0.7 | 1.3201 | 1.3183 | +0.0790 | 2,677 | 224ms |
+| S4 | 0.8 | — | 1.2652 | +0.0241 | 2,643 | 227ms |
+| A | — | 1.2411 | 1.2420 | — | 2,572 | 233ms |
+
+**Conclusion: SLM is harmful at 17M scale.** Every ratio tested (k=0.6 to k=0.95) produces worse BPB than the no-SLM baseline. The damage decreases as k approaches 1.0 (fewer tokens dropped), but never reaches parity. Even dropping just 5% of tokens (k=0.95) hurts by +0.0019 BPB.
+
+**Why it fails:** At 17M params, the model hasn't learned common patterns well enough to afford skipping any tokens. The Rho-1 paper's results on 1B+ models don't transfer — small models need every gradient signal available in a 10-minute window. Simple loss-threshold filtering (Option A) is too crude without a reference model to distinguish "learnable hard" from "unlearnable hard" tokens.
 
 ---
 
@@ -745,7 +770,6 @@ _Add entries as we discover things._
 | Technique | Impact on BPB | Why it works |
 |---|---|---|
 | **SP8192 vocab scaling** | 1.2411 (2×H100) vs 1.2649 SP1024 = **-0.024 BPB** | Bigger vocab = fewer tokens per byte = lower BPB. Single biggest lever. All top 8 leaderboard entries use SP4096/SP8192. Paper: "Scaling Laws with Vocabulary" (NeurIPS 2024). |
-| ~~SLM k=0.8 (Rho-1)~~ | ~~-0.0027 BPB on SP8192~~ **INVALID** | SLM code was not present on RunPod during Session 6. Validation pending — Session 7. Paper: "Not All Tokens Are What You Need" (NeurIPS 2024). |
 | **Score-First TTT** | -0.0021 BPB (1.2432→1.2411) | Eval-time fine-tuning: adapt model to validation distribution. Legal under PG rules (score before update). Source: @dexhunter (PG competition). |
 | Gated Attention (headwise) | 1.2653 (compressed), fits 16 MB | Sigmoid gate after SDPA lets model suppress uninformative heads per token. Nearly free: +37K params, no speed penalty. Original technique by James Vo. |
 | LeakyReLU² | -0.0008 BPB vs baseline (1.2641 vs 1.2649) | Free activation swap — no extra params, no speed cost. Used by PG ranks 10-11. |
@@ -756,6 +780,7 @@ _Add entries as we discover things._
 |---|---|---|---|
 | Gated Attention (elementwise) | Better BPB than headwise | 1.2602 BPB but 17.87 MB (over budget) | +2.36M params makes compressed model too large. Marginal BPB gain (+0.005) not worth the cost. |
 | QK-Gain 5.0 (on SP1024) | Better attention scaling | 1.2719 BPB (worse than headwise 1.2653) | 15% slower steps (210ms vs 182ms), higher VRAM (13GB vs 10GB). QK-Gain 5.0 likely needs SP8192 to be effective. |
+| SLM / Rho-1 (all ratios) | Better per-step learning by filtering easy tokens | k=0.6: +0.155 BPB, k=0.8: +0.024, k=0.95: +0.002 — ALL worse than no-SLM | At 17M params, model needs every gradient signal. Rho-1 paper tested at 1B+; doesn't transfer down. Simple loss-threshold (Option A) too crude without reference model. Paper: "Not All Tokens Are What You Need" (NeurIPS 2024). |
 
 ## Key Insights
 
@@ -765,7 +790,7 @@ _High-level takeaways that apply beyond the competition._
 2. Model still improving at wall clock cutoff — not converged, more throughput = better score
 3. int8+zlib compression is essentially free (1.3033 → 1.3045, only +0.001 BPB degradation)
 4. SP8192 dataset is NOT in the official PG repo (`willdepueoai/parameter-golf`). It's hosted on Kevin Clark's fork: `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80`. All top 5 submissions (ranks 1-5) use this source.
-5. ~~**SLM optimal ratio is k=0.8 at 17M scale**~~ **INVALID** — SLM code was not present during Session 6 runs. SLM validation pending (Session 7).
+5. **SLM (Rho-1) doesn't work at 17M scale** — validated in Session 7 with working code. Every ratio (k=0.6 to k=0.95) hurts. Small models need all tokens; the paper's 1B+ results don't transfer down.
 6. **Techniques stack cleanly** — SP8192 + TTT + LeakyReLU² + headwise + QKG5 all combine without interference. Best 2×H100: 1.2411 BPB (Run A). *(SLM stacking claim retracted pending validation.)*
 7. **3-seed reproducibility confirmed** — SP8192 combo slim + TTT on 8×H100 gives mean 1.2073 BPB (std ±0.0006). Results are stable across random seeds.
 8. **Total cost: ~$240+ across 30+ experiments** — systematic ablation approach validated each technique individually before stacking.

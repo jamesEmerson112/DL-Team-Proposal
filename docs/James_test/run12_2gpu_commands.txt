@@ -1,7 +1,5 @@
-# SLM k=0.95 test — plain GQA baseline, 2×H100
-# Barely selective: drop only the easiest 5% of tokens.
-# Compare against Run 6v2 (1.2649 BPB, same config without SLM).
-# If this still hurts, SLM is fully dead at 17M scale.
+# Elementwise + MQA sweep — 2×H100 RunPod
+# 4 runs testing elementwise gated attention and MQA at reduced dims to fit 16 MB.
 
 # === 1. Setup (skip if already done) ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
@@ -10,25 +8,26 @@ git fetch origin
 git checkout James-experiment
 git pull origin James-experiment
 
-# === 2. Verify SLM code exists ===
-grep -c "slm_enabled" parameter-golf/train_gpt.py
-# Expected: 3+ matches
-
-# === 3. Install deps (skip if already done) ===
+# === 2. Install deps (skip if already done) ===
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install huggingface_hub
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# === 3. Download SP8192 dataset (skip if already done) ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
 cd ..
 
-# === 4. Run SLM k=0.95 (single run, ~12 min) ===
-source runs/configs/slm_sweep_95.env
-export NGPUS=2
-bash runs/parameter_golf_baseline.sh
+# === 4. Run elementwise + MQA sweep (4 runs, ~40 min) ===
+bash runs/run_elementwise_mqa_2gpu.sh
 
-# === Expected ===
-# Compare val_bpb against 1.2649 (Run 6v2, no SLM)
-# If val_bpb > 1.2649 → SLM hurts even at k=0.95, technique is dead
-# If val_bpb < 1.2649 → there's a sweet spot, worth exploring k=0.9-0.99
+# === Expected output ===
+# E1: Elementwise dim=448 GQA      → probably over 16 MB, BPB ceiling
+# E2: Elementwise dim=416 GQA      → should fit, compare to Run A (1.2411)
+# E3: MQA dim=448 headwise         → MQA on SP8192 for first time
+# E4: MQA + Elementwise dim=416    → combo, compare to Run A (1.2411)
+# Winner = lowest BPB that fits under 16 MB → goes to 8×H100

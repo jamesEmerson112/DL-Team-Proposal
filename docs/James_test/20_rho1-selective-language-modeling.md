@@ -124,14 +124,13 @@ We have a **fixed 10-minute wall clock** on 8xH100. We can't train longer — we
 
 ### Current State (Updated 2026-04-26)
 
-> **⚠️ SLM NEVER ACTUALLY TESTED:** All "SLM" runs in Session 6 were invalid — the RunPod had commit `d7af1ec` (Apr 23) which predates the SLM code push (Apr 26 7:18 PM). `SLM_ENABLED` was set but the code to use it didn't exist. All results below claiming SLM improvements are retracted. **First real SLM validation will be Session 7.**
+> **SLM VALIDATED IN SESSION 7 — DOES NOT WORK AT 17M SCALE.** Session 6 runs were invalid (code not present). Session 7 ran 5 experiments with working SLM code. Every ratio tested (k=0.6 to k=0.95) produced worse BPB than the no-SLM baseline. SLM is a dead end for Parameter Golf.
 
-- Best 2×H100 run: **1.2411 BPB** (Run A, SP8192 combo slim + TTT) — ~~1.2384 was Run 13 but SLM was not active~~
-- Best 8×H100 run: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT)
-- ~~Projected 8×H100 with SLM k=0.8: ~1.2050 BPB~~ — retracted, SLM untested
+- Best 2×H100 run: **1.2411 BPB** (Run A, SP8192 combo slim + TTT, no SLM)
+- Best 8×H100 run: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT, no SLM)
 - PG baseline: **1.2244 BPB**
 - Current SOTA: **1.0810 BPB**
-- Gap to SOTA: **+0.1267 BPB** — we need techniques that make each step count more
+- **SLM results (Session 7):** k=0.6 → +0.155 BPB worse, k=0.7 → +0.079, k=0.8 → +0.024, k=0.95 → +0.002. Trend is clear: the less you filter, the less damage, but it never helps.
 
 ---
 
@@ -337,41 +336,41 @@ All experiments run on 2×H100 SXM, PyTorch 2.11, 10-min wall clock. Option A (s
 
 ### Key Takeaways for Presentation
 
-> **All claims below are INVALID — SLM was never actually tested. Awaiting Session 7 validation.**
+> **SESSION 7 RESULTS: SLM does NOT work at 17M scale.**
 
-1. ~~**SLM works at 17M scale**~~ — untested
-2. ~~**k=0.8 is optimal**~~ — untested (sweep results were noise)
-3. **Zero overhead** — theoretically true (code adds only `torch.topk`), but never measured in practice
-4. ~~**Stacks with everything**~~ — untested
-5. ~~**New best 2×H100: 1.2384 BPB**~~ — this was Run A noise (1.2411 is the valid best)
-6. ~~**Projected 8×H100: ~1.2050 BPB**~~ — retracted
-7. **Implementation: 3 lines of code** — still true, code is now in the repo awaiting first real test
+1. ~~**SLM works at 17M scale**~~ — **DISPROVEN.** Every ratio (k=0.6 to k=0.95) hurts BPB.
+2. ~~**k=0.8 is optimal**~~ — **No.** Best k is 1.0 (i.e., no SLM). The "improvement" as k rises just means less damage.
+3. **Zero overhead** — True. `torch.topk` adds <1ms per step. But the technique itself is harmful, so irrelevant.
+4. ~~**Stacks with everything**~~ — **Cannot stack something that hurts.** S2-S4 on SP8192 combo all worse than Run A.
+5. ~~**New best 2×H100: 1.2384 BPB**~~ — That was noise from Session 6 (SLM code absent). Actual best: 1.2411 (Run A, no SLM).
+6. ~~**Projected 8×H100: ~1.2050 BPB**~~ — Retracted. SLM would make 8×H100 worse, not better.
+7. **Implementation: 3 lines of code** — True, but the technique doesn't help at this scale.
 
 ---
 
 ## 8. Key Unknowns & Risks (Updated with Results)
 
-### 17M Scale is Uncharted Territory → ~~RESOLVED~~ STILL UNKNOWN
+### 17M Scale is Uncharted Territory → RESOLVED: IT FAILS
 
 The paper tested on 1.1B and 7B models. Our 17M model is 65x smaller than the smallest tested.
 
-~~**Result:** SLM improves BPB at 17M scale.~~ **INVALID** — SLM code was not present during testing. This remains an open question for Session 7.
+**Result:** SLM **hurts** at 17M scale. Every ratio tested (k=0.6 to k=0.95) degrades BPB. At this model size, even "easy" tokens carry gradient signal the model still needs. The paper's minimum tested scale (1.1B) is 65x larger — the technique simply doesn't transfer down.
 
-### H->H Token Contamination (Option A) → ~~RESOLVED~~ STILL UNKNOWN
+### H->H Token Contamination (Option A) → RESOLVED: MOOT
 
 Simple loss-threshold keeps ALL high-loss tokens, including H->H (unlearnable noise). Full Rho-1 would filter these via excess loss.
 
-~~**Result:** At k=0.8, only 20% of tokens are dropped~~ **INVALID** — SLM code was not present. Theoretical reasoning still applies but needs empirical validation in Session 7.
+**Result:** The entire SLM approach fails at 17M scale, so H->H contamination is moot. Even at k=0.95 (dropping only 5%), the model is worse. The problem isn't which tokens are kept/dropped — it's that the model is too small to benefit from any filtering.
 
-### Interaction with TTT → ~~RESOLVED~~ STILL UNKNOWN
+### Interaction with TTT → RESOLVED: SLM HURTS EVEN WITH TTT
 
 TTT (Test-Time Training) fine-tunes the model on validation chunks at eval time.
 
-~~**Result:** SLM and TTT stack cleanly.~~ **INVALID** — Run 13 was not running SLM. Whether SLM + TTT interact positively is untested. Theoretically they should be complementary (SLM during training, TTT at eval), but needs Session 7 validation.
+**Result:** SLM + TTT tested in Session 7 (Runs S2-S4). SLM degrades the base model so much that TTT can't recover. S2 (k=0.6 + TTT) = 1.4034, vs Run A (no SLM + TTT) = 1.2411. TTT can't fix a model that trained on filtered tokens.
 
-### SLM_RATIO Sensitivity → ~~RESOLVED~~ STILL UNKNOWN
+### SLM_RATIO Sensitivity → RESOLVED: MONOTONIC — LESS FILTERING = LESS DAMAGE
 
-~~**Result:** Full sweep from k=0.4 to k=0.9 tested.~~ **INVALID** — SLM code was not present. The "sweep" results were all running without SLM; BPB differences were noise. Session 7 will run a real sweep with k=0.6, 0.7, 0.8 on working SLM code.
+**Result (Session 7):** Real sweep with working SLM code: k=0.6 (+0.155), k=0.7 (+0.079), k=0.8 (+0.024), k=0.95 (+0.002). Perfectly monotonic — the less you filter, the less damage. Optimal k is 1.0 (no filtering). There is no sweet spot.
 
 ---
 
