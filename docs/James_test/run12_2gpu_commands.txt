@@ -1,8 +1,9 @@
-# SLM Validation Runs — 2×H100 RunPod Setup
-# These are the FIRST real SLM runs. All previous "SLM" runs were invalid
-# (RunPod had commit d7af1ec which predates SLM code).
+# SLM k=0.95 test — plain GQA baseline, 2×H100
+# Barely selective: drop only the easiest 5% of tokens.
+# Compare against Run 6v2 (1.2649 BPB, same config without SLM).
+# If this still hurts, SLM is fully dead at 17M scale.
 
-# === 1. Setup ===
+# === 1. Setup (skip if already done) ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
 git fetch origin
@@ -10,30 +11,24 @@ git checkout James-experiment
 git pull origin James-experiment
 
 # === 2. Verify SLM code exists ===
-# CRITICAL: must be >0 or SLM won't work
 grep -c "slm_enabled" parameter-golf/train_gpt.py
 # Expected: 3+ matches
 
-# === 3. Install deps ===
+# === 3. Install deps (skip if already done) ===
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install huggingface_hub
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
-
-# === 4. Download SP8192 dataset (~5-10 min) ===
-rm -f data/manifest.json
-MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
-
 cd ..
 
-# === 5. Run SLM validation (4 runs, ~50 min) ===
-bash runs/run_slm_validation_2gpu.sh
+# === 4. Run SLM k=0.95 (single run, ~12 min) ===
+source runs/configs/slm_sweep_95.env
+export NGPUS=2
+bash runs/parameter_golf_baseline.sh
 
-# === Expected output ===
-# S1: SP1024 GQA + SLM k=0.6   → compare to 1.2649 (Run 6v2)
-# S2: SP8192 combo + SLM k=0.6 → compare to 1.2411 (Run A)
-# S3: SP8192 combo + SLM k=0.7 → compare to 1.2411 (Run A)
-# S4: SP8192 combo + SLM k=0.8 → compare to 1.2411 (Run A)
-# Winner (lowest BPB among S2-S4) → goes to 8×H100
+# === Expected ===
+# Compare val_bpb against 1.2649 (Run 6v2, no SLM)
+# If val_bpb > 1.2649 → SLM hurts even at k=0.95, technique is dead
+# If val_bpb < 1.2649 → there's a sweet spot, worth exploring k=0.9-0.99
