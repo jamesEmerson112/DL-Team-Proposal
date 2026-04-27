@@ -818,6 +818,11 @@ def gptq_collect_hessians_from_tokens(
         for attr in ("_gptq_up_in", "_gptq_down_in"):
             if hasattr(block.mlp, attr):
                 delattr(block.mlp, attr)
+        # Invalidate Rotary cos/sin cache — inference_mode() creates tensors that
+        # can't be used in autograd. TTT needs to recompute them with gradients.
+        block.attn.rotary._cos_cached = None
+        block.attn.rotary._sin_cached = None
+        block.attn.rotary._seq_len_cached = 0
     _gptq_finalize_hessians(hessians, len(token_seqs))
     model.train(was_training)
     return hessians
