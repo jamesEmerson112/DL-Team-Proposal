@@ -4,30 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Deep Learning Team Proposal** repository. The project objective is to **train a language model using nanochat, then create multiple model variants to produce a learning curve comparison** studying which techniques (e.g., SFT, RLHF, depth/hyperparameter configurations) contribute most to model improvement. Background research also covers **nanoGPT** and **llm.c** (all by Andrej Karpathy) for comparative context.
+This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 30+ experiments completed, best submittable result: **1.2077 BPB** (Run 11).
 
 ## Repository Structure
 
-- `docs/James_notes/` — James's research notes (numbered 01-07, with 00 as table of contents)
+- `parameter-golf/` — Forked competition repo (submodule, contains `train_gpt.py` with our modifications)
+- `runs/` — Experiment launch scripts + `configs/` (21 .env config files)
+- `docs/James_test/` — Research notes (numbered 00-20, plus compute-plan.md)
+- `docs/parameter-golf/` — Competition overview, findings, paper survey (29 papers)
+- `tools/` — Plotting utilities (`plot_curves.py`)
 - `README.md` — Project overview
 - `LICENSE` — MIT License
 
+**Note:** `docs/James_notes/` is gitignored (private working copies). `docs/James_test/` is the committed notes folder.
+
 ## Current State
 
-This is a **research-only repository** — no code implementation. Work products are documentation and comparative analysis of the three frameworks being evaluated:
-
-| Framework | Language | Scope | Status |
-|-----------|----------|-------|--------|
-| nanoGPT | Python/PyTorch | Pretraining only | Deprecated |
-| llm.c | C/CUDA | Pretraining only | Active |
-| nanochat | Python/PyTorch | Full pipeline (pretrain + SFT + RLHF + chat UI) | Active, successor to nanoGPT |
+Active research + experimentation repository. Code modifications in `parameter-golf/train_gpt.py` include SLM (Selective Language Modeling), LeakyReLU² activation, gated attention (headwise/elementwise), QK-Gain scaling, and Score-First TTT. Project focus has shifted fully to the **Parameter Golf pipeline** — nanochat research is background context only.
 
 ## Key Context
 
-- nanochat is the official successor to nanoGPT (released Oct 2025)
-- The team has an existing comparison table covering language, dependencies, performance, parameters, training stages, cost, and ease of use across all three frameworks
-- llm.c offers ~7% faster performance than PyTorch with minimal dependencies (pure C/CUDA)
-- nanochat introduces a "Complexity Dial" (`--depth` parameter) that auto-configures all hyperparameters
+- **Parameter Golf** is the active competition target: 16 MB artifact, 10 min on 8×H100, scored by FineWeb validation BPB
+- 30+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
+- Best submittable result: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT) — beats PG baseline (1.2244)
+- 3-seed reproducibility confirmed: mean 1.2073 ±0.0006 BPB
+- nanochat is the official successor to nanoGPT (released Oct 2025) — studied for technique porting but not used directly
 
 ## Context History
 

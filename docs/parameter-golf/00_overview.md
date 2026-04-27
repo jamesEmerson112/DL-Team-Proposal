@@ -1,7 +1,7 @@
 # Parameter Golf — Getting Started
 
 > Operational guide for participating in OpenAI's Parameter Golf competition.
-> For research context, see [08_parameter-golf.md](../James_notes/08_parameter-golf.md).
+> For research context, see [08_parameter-golf.md](../James_test/08_parameter-golf.md).
 
 ## Quick Facts
 
