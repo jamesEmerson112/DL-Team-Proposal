@@ -92,6 +92,12 @@ class Hyperparameters:
     # Activation: "relu2" (default), "leaky_relu2" = LeakyReLU(0.5)² (PG ranks 10-11)
     activation = os.environ.get("ACTIVATION", "relu2")
 
+    # Selective Language Modeling (Rho-1, NeurIPS 2024 Best Paper Runner-Up)
+    # "Not All Tokens Are What You Need" — https://arxiv.org/abs/2401.04056
+    # Keep top k% tokens by loss, skip easy ones
+    slm_enabled = os.environ.get("SLM_ENABLED", "0") == "1"
+    slm_ratio = float(os.environ.get("SLM_RATIO", "0.6"))
+
     # Test-Time Training (Score-First TTT, PG ranks 1-3)
     # "none" = disabled (baseline), "score_first" = legal score-before-update TTT
     ttt_mode = os.environ.get("TTT_MODE", "none")
@@ -970,8 +976,12 @@ class GPT(nn.Module):
         qk_gain_init: float,
         gated_attn: str = "none",
         activation: str = "relu2",
+        slm_enabled: bool = False,
+        slm_ratio: float = 0.6,
     ):
         super().__init__()
+        self.slm_enabled = slm_enabled
+        self.slm_ratio = slm_ratio
         if logit_softcap <= 0.0:
             raise ValueError(f"logit_softcap must be positive, got {logit_softcap}")
         self.tie_embeddings = tie_embeddings
@@ -1039,6 +1049,13 @@ class GPT(nn.Module):
         logits = self._run_backbone(input_ids)
         logits = logits.reshape(-1, logits.size(-1))
         targets = target_ids.reshape(-1)
+        # Rho-1 Selective Language Modeling (https://arxiv.org/abs/2401.04056)
+        # Train only on top-k% hardest tokens; skip well-predicted ones
+        if self.training and self.slm_enabled:
+            per_token_loss = F.cross_entropy(logits.float(), targets, reduction="none")
+            k = max(1, int(per_token_loss.numel() * self.slm_ratio))
+            topk_losses, _ = torch.topk(per_token_loss, k)
+            return topk_losses.mean()
         return F.cross_entropy(logits.float(), targets, reduction="mean")
 
 
@@ -1155,6 +1172,8 @@ def main() -> None:
         qk_gain_init=args.qk_gain_init,
         gated_attn=args.gated_attn,
         activation=args.activation,
+        slm_enabled=args.slm_enabled,
+        slm_ratio=args.slm_ratio,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):

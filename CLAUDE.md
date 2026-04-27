@@ -4,30 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Deep Learning Team Proposal** repository. The project objective is to **train a language model using nanochat, then create multiple model variants to produce a learning curve comparison** studying which techniques (e.g., SFT, RLHF, depth/hyperparameter configurations) contribute most to model improvement. Background research also covers **nanoGPT** and **llm.c** (all by Andrej Karpathy) for comparative context.
+This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 30+ experiments completed, best submittable result: **1.2077 BPB** (Run 11).
 
 ## Repository Structure
 
-- `docs/James_notes/` — James's research notes (numbered 01-07, with 00 as table of contents)
+- `parameter-golf/` — Forked competition repo (submodule, contains `train_gpt.py` with our modifications)
+- `runs/` — Experiment launch scripts + `configs/` (21 .env config files)
+- `docs/James_test/` — Research notes (numbered 00-20, plus compute-plan.md)
+- `docs/parameter-golf/` — Competition overview, findings, paper survey (29 papers)
+- `tools/` — Plotting utilities (`plot_curves.py`)
 - `README.md` — Project overview
 - `LICENSE` — MIT License
 
+**Note:** `docs/James_notes/` is gitignored (private working copies). `docs/James_test/` is the committed notes folder.
+
 ## Current State
 
-This is a **research-only repository** — no code implementation. Work products are documentation and comparative analysis of the three frameworks being evaluated:
-
-| Framework | Language | Scope | Status |
-|-----------|----------|-------|--------|
-| nanoGPT | Python/PyTorch | Pretraining only | Deprecated |
-| llm.c | C/CUDA | Pretraining only | Active |
-| nanochat | Python/PyTorch | Full pipeline (pretrain + SFT + RLHF + chat UI) | Active, successor to nanoGPT |
+Active research + experimentation repository. Code modifications in `parameter-golf/train_gpt.py` include SLM (Selective Language Modeling), LeakyReLU² activation, gated attention (headwise/elementwise), QK-Gain scaling, and Score-First TTT. Project focus has shifted fully to the **Parameter Golf pipeline** — nanochat research is background context only.
 
 ## Key Context
 
-- nanochat is the official successor to nanoGPT (released Oct 2025)
-- The team has an existing comparison table covering language, dependencies, performance, parameters, training stages, cost, and ease of use across all three frameworks
-- llm.c offers ~7% faster performance than PyTorch with minimal dependencies (pure C/CUDA)
-- nanochat introduces a "Complexity Dial" (`--depth` parameter) that auto-configures all hyperparameters
+- **Parameter Golf** is the active competition target: 16 MB artifact, 10 min on 8×H100, scored by FineWeb validation BPB
+- 30+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
+- Best submittable result: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT) — beats PG baseline (1.2244)
+- 3-seed reproducibility confirmed: mean 1.2073 ±0.0006 BPB
+- nanochat is the official successor to nanoGPT (released Oct 2025) — studied for technique porting but not used directly
 
 ## Context History
 
@@ -100,3 +101,40 @@ This is a **research-only repository** — no code implementation. Work products
   - Exclusive Self-Attention / XSA (arXiv 2026) — proven on leaderboard ranks 8,10,14,15
 - [finding] PG SOTA updated: current best is ~1.028 BPB (down from 1.081 previously noted); top submissions now use LoRA TTT, cross-sequence attention, and pre-quantization TTT
 - [todo] Prioritize leaderboard-proven techniques for next runs: EWA, FlashAttention-3, XSA, Value Residual Learning
+
+### 2026-04-26 (Session 5)
+- [research] Deep-dived into Rho-1 paper (NeurIPS 2024 Best Paper Runner-Up) — Selective Language Modeling (SLM). Explained token categories (H→H, H→L, L→H, L→L), excess loss formula, and how only ~26% of tokens drive meaningful learning
+- [research] Explored XSA (Exclusive Self-Attention, arXiv 2026) and Differential Attention (ICLR 2025 Oral) — two attention modifications proven on PG leaderboard
+- [research] Confirmed microsoft/rho GitHub repo has NO training code — only pretrained models + eval. Must implement SLM ourselves
+- [feat] Created `docs/James_notes/19_rho1-selective-language-modeling.md` — comprehensive research notes with 4-phase testing plan (smoke test → ratio sweep → competition run → 3-seed submission), pass/fail criteria, estimated costs (~$26 total)
+- [feat] Implemented SLM Option A (simple loss-threshold) in `parameter-golf/train_gpt.py`:
+  - Added `SLM_ENABLED` + `SLM_RATIO` env vars to Hyperparameters class
+  - Added params to `GPT.__init__` signature + model instantiation
+  - Modified loss at line 743: when SLM enabled during training, uses `F.cross_entropy(reduction="none")` + `torch.topk` to keep top k% tokens by loss, averages only those. Validation still uses full mean loss.
+- [feat] Updated ALL 11 existing .env configs with `SLM_ENABLED=0` + `SLM_RATIO=0.6` defaults (prevents stale env var contamination)
+- [feat] Created 4 new experiment configs: `slm_test.env` (k=0.6), `slm_sweep_50.env`, `slm_sweep_70.env`, `slm_sweep_80.env`
+- [feat] Updated `runs/parameter_golf_baseline.sh` summary block to print slm_enabled/slm_ratio
+- [feat] Created `runs/parameter_golf_8gpu_3seed_run.sh` — wrapper that runs 3 seeds (42, 1337, 2025) and computes mean/std val_bpb with submission.json snippet
+- [feat] Created `runs/run_all_2gpu.sh` — sequential runner for all 2xH100 experiments (SP8192 combo slim retry + SLM phases 1-3), with results summary table at the end
+- [feat] Updated `docs/James_test/run12_2gpu_commands.txt` and `docs/James_test/run_8gpu_commands.txt` with SLM experiment commands (Runs A-E with notes and pass/fail criteria)
+- [edit] Sorted paper survey table in `docs/parameter-golf/neurlps-paper-survey.md` by year (2026→2023), kept original # numbers for reference stability
+- [note] Paper #15 (Small Batch Size Training) flagged as low-hanging fruit — just remove grad_accum_steps + tune beta2, no code change needed. Keeping in mind for later.
+- [finding] TTT (Test-Time Training) is NOT from a paper in our survey — it's a practitioner-developed eval-time trick from the PG competition (attributed to @dexhunter PR #1413)
+
+### 2026-04-26 (Session 6)
+- [bugfix] Fixed NGPUS bug in `run_all_2gpu.sh` — config files were overwriting `NGPUS=2` to `NGPUS=1` via `source`. Fix: removed `export NGPUS=` from all 15 .env configs. Baseline scripts have safe fallbacks (`NGPUS="${NGPUS:-1}"`)
+- [feat] Expanded `runs/run_all_2gpu.sh` from 6 to 14 runs (added E-L: headwise+QKG5, LeakyReLU², combos with SLM, SP8192 no-TTT ablation, extended SLM sweep k=0.4/0.9)
+- [feat] Created 6 new .env configs: `leaky_relu2_slm.env`, `sp8192_combo_slim_nottt.env`, `slm_sweep_40.env`, `slm_sweep_90.env`, `headwise_qkgain5_slm.env`, `leaky_relu2_headwise_slm.env`
+- [run] Executed 14-run sweep on 2×H100 + 1 baseline confirm + 1 money shot (16 total runs)
+- [run] Baseline confirm: 1.2659 BPB, 171ms step_avg, 3,508 steps — matches old pods exactly
+- [finding] SP8192 dominates: all SP8192 runs (1.238-1.243) beat every SP1024 run (1.289+) by ~0.05 BPB
+- [finding] SLM k=0.8 is optimal ratio from sweep (k=0.4 to 0.9)
+- [finding] SLM improves SP8192 combo: Run A (no SLM) 1.2411 → Run D (SLM k=0.6) 1.2396 → Run 13 (SLM k=0.8) **1.2384** — new best 2×H100 run
+- [finding] TTT contributes ~0.002 BPB on 2×H100 (Run A 1.2411 vs Run H no-TTT 1.2432)
+- [finding] Techniques stack on SP1024: L (LReLU²+headwise+SLM) 1.2899 > F (LReLU² only) 1.2932
+- [finding] Projected 8×H100 with SLM k=0.8: ~1.2050 BPB (from Run 11's 1.2077 - 0.0027 SLM delta)
+- [edit] Updated `docs/James_test/run12_2gpu_commands.txt` — replaced old runs A-D with single "money shot" run (SP8192 combo slim + SLM k=0.8)
+- [edit] Added Run 13 (1.2384 BPB) to `docs/parameter-golf/findings.md` 2×H100 table
+- [feat] Created `docs/James_test/pg_grant_application.txt` — PG Development grant ($500) application with 3 fields: approach (1,500 chars), tried so far (255 chars), PR link
+- [ref] PR submission: https://github.com/openai/parameter-golf/pull/1799
+- [user] User is An Thien Vo, Georgia Tech grad student, CS 7643 Deep Learning. Spent $240+ personal funds on PG experiments.

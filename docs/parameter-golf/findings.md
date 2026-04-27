@@ -13,10 +13,26 @@
 
 **Best submittable run: Run 11 (SP8192 combo slim + TTT)** — 1.2077 BPB, **-0.0167 below PG baseline**, 15.35 MB (under budget with 0.52 MB headroom). First run that beats baseline AND fits in 16 MB.
 
+### 3-Seed Reproducibility — SP8192 Combo Slim + TTT, 8×H100
+
+| Seed | val_loss (TTT) | val_bpb (TTT) | Steps | Size (int8+zlib) |
+|------|----------------|---------------|-------|-------------------|
+| 42 | 3.1200 | 1.2078 | 11,028 | 15.34 MB |
+| 1337 | 3.1169 | **1.2067** | 11,030 | 15.34 MB |
+| 2025 | 3.1190 | 1.2075 | 11,036 | 15.34 MB |
+| **Mean** | **3.1186** | **1.2073** | **11,031** | — |
+| **Std** | — | **±0.0006** | — | — |
+
+**Confirms robustness:** 3 seeds produce nearly identical results (std 0.0006 BPB). Mean 1.2073 ≈ Run 11's 1.2077 — reproducible within noise.
+
 ## Experiment Runs — 2×H100 (sorted by BPB, best first)
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------------------|---------|
+| 13†‡ | SP8192 combo slim + TTT (re-run) | 16.36M | 3.1990 | 1.2384 | 2,749 | 218ms | 15.09 MB | Yes |
+| D†‡ | SP8192 combo slim + TTT (re-run) | 16.36M | 3.2021 | 1.2396 | 2,652 | 226ms | 15.08 MB | Yes |
+| A† | SP8192 combo slim + TTT | 16.36M | 3.2059 | 1.2411 | 2,572 | 233ms | 15.03 MB | Yes |
+| H† | SP8192 combo slim (no TTT) | 16.36M | 3.2112 | 1.2432 | 2,541 | 236ms | 15.04 MB | Yes |
 | 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
 | 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | 15.77 MB | Yes |
 | 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB | Yes |
@@ -28,11 +44,70 @@
 | 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step).**
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26.**
+
+**‡ SLM INVALID:** Runs D and 13 originally claimed SLM, but the RunPod had commit `d7af1ec` (Apr 23) which predates the SLM code push (Apr 26 7:18 PM). `SLM_ENABLED` env var was set but ignored — the code to use it didn't exist yet. BPB values are valid as additional Run A repeats (SP8192 combo slim + TTT). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise). **SLM validated in Session 7 — confirmed harmful, see below.**
 
 > **Note:** Run 1 (2026-04-16) excluded — ran on 1×GPU (old pod, PyTorch 2.4.1), completed only 1,819 steps. Result (1.3045 BPB) is not comparable. Run 12 was an accidental vanilla baseline (config source failed, intended as SP8192 combo slim).
 
 *\* Original technique by James Vo — gated attention applied post-SDPA with sigmoid gates, inspired by NeurIPS 2025 Best Paper (arxiv.org/abs/2505.06708).*
+
+### Session 6 — SLM Ratio Sweep & Technique Stacking (SP1024, 1-GPU†)
+
+> **⚠️ NGPUS bug:** These SP1024 runs used 1 GPU due to an env var overwrite bug (step_avg ~220ms vs normal ~163ms on 2×H100). Absolute BPB is inflated but **relative comparisons are valid.**
+>
+> **⚠️ SLM INVALID:** The RunPod had commit `d7af1ec` (Apr 23) which predates the SLM code push (Apr 26 7:18 PM). ALL "SLM" runs below were actually running without SLM — the `SLM_ENABLED` env var was set but the code to use it didn't exist yet. BPB differences in the "SLM sweep" are run-to-run noise. Technique stacking runs labeled "+SLM" were actually running their base technique only. **SLM validation pending — Session 7.**
+
+**SLM Ratio Sweep** (SP1024, GQA baseline + SLM):
+
+| SLM k | val_bpb | Steps | Notes |
+|-------|---------|-------|-------|
+| 0.4 | 1.2954 | 2,784 | Too aggressive — skips 60% of tokens |
+| 0.5 | 1.3001 | 2,554 | Worst — too many tokens dropped |
+| 0.6 | 1.2994 | 2,615 | Paper-recommended range |
+| 0.7 | 1.2973 | 2,713 | |
+| **0.8** | **1.2949** | **2,801** | **Best ratio — more conservative than paper** |
+| 0.9 | 1.2955 | 2,818 | Nearly full training |
+
+**Technique Stacking** (SP1024, 1-GPU):
+
+| Technique | val_bpb | Steps | Notes |
+|-----------|---------|-------|-------|
+| LeakyReLU² + headwise + SLM k=0.6 | **1.2899** | 2,933 | Best SP1024 combo |
+| LeakyReLU² + SLM k=0.6 | 1.2927 | 2,655 | |
+| Headwise + QKG5 + SLM k=0.6 | 1.2927 | 2,939 | |
+| LeakyReLU² | 1.2932 | 2,619 | |
+| Headwise + QK-Gain 5.0 | 1.2981 | 2,668 | |
+| SLM test k=0.6 | 1.2994 | 2,615 | |
+
+**Key findings:** (1) ~~SLM k=0.8 optimal at 17M scale~~ **INVALID — SLM code not present, see note above.** (2) Techniques stack: LReLU²+headwise beats any single technique (SLM contribution was noise, not real). (3) SP8192 still dominates: best SP1024 combo (1.2899 on 1-GPU) can't match SP8192 on same hardware (1.2411-1.2432).
+
+† All runs 2026-04-26, PyTorch 2.6, 10-min wall clock. NGPUS bug confirmed by step_avg (~220ms vs expected ~163ms for 2×H100).
+
+### Session 7 — SLM Validation (2×H100, SLM code confirmed present)
+
+First real SLM runs with working code. Preflight check verified `slm_enabled` in `train_gpt.py` before running.
+
+**SLM Ratio Sweep** (SP1024 GQA baseline + SLM, 2×H100):
+
+| Run | Config | SLM k | val_bpb (int8) | vs Run 6v2 (1.2649) | Steps | Step avg |
+|-----|--------|-------|----------------|---------------------|-------|----------|
+| S1 | SP1024 GQA + SLM | 0.6 | 1.4204 | **+0.1555** | 3,318 | 181ms |
+| S5 | SP1024 GQA + SLM | 0.95 | 1.2668 | +0.0019 | 3,403 | 176ms |
+| 6v2 | SP1024 GQA (no SLM) | — | 1.2649 | — | 3,661 | 164ms |
+
+**SLM on SP8192 competition config** (combo slim + TTT, 2×H100):
+
+| Run | SLM k | val_bpb (TTT) | val_bpb (int8) | vs Run A (1.2411) | Steps | Step avg |
+|-----|-------|---------------|----------------|-------------------|-------|----------|
+| S2 | 0.6 | 1.4034 | 1.4002 | **+0.1592** | 2,654 | 226ms |
+| S3 | 0.7 | 1.3201 | 1.3183 | +0.0790 | 2,677 | 224ms |
+| S4 | 0.8 | — | 1.2652 | +0.0241 | 2,643 | 227ms |
+| A | — | 1.2411 | 1.2420 | — | 2,572 | 233ms |
+
+**Conclusion: SLM is harmful at 17M scale.** Every ratio tested (k=0.6 to k=0.95) produces worse BPB than the no-SLM baseline. The damage decreases as k approaches 1.0 (fewer tokens dropped), but never reaches parity. Even dropping just 5% of tokens (k=0.95) hurts by +0.0019 BPB.
+
+**Why it fails:** At 17M params, the model hasn't learned common patterns well enough to afford skipping any tokens. The Rho-1 paper's results on 1B+ models don't transfer — small models need every gradient signal available in a 10-minute window. Simple loss-threshold filtering (Option A) is too crude without a reference model to distinguish "learnable hard" from "unlearnable hard" tokens.
 
 ---
 
@@ -589,13 +664,115 @@
 - TTT improved BPB by -0.002 over non-TTT (1.2096 → 1.2077)
 - 0.52 MB headroom — room for a slightly wider model (maybe MODEL_DIM=464?)
 
+### Run A — SP8192 Combo Slim + TTT (retry), 2×H100 (2026-04-26)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-26 |
+| GPUs | 2× H100 |
+| Technique | SP8192 + Score-First TTT + LeakyReLU² + QK-Gain 5.0 + Headwise + MODEL_DIM=448 |
+| Params | 16,364,616 (~16.4M) |
+| Vocab | 8192 (SentencePiece BPE) |
+| Steps completed | 2,572 / 20,000 (hit 10-min wall clock cap) |
+| Step avg | 233 ms |
+| Peak VRAM | 10,570 MiB |
+| **val_bpb (int8+zlib)** | **1.2420** |
+| **val_bpb (TTT)** | **1.2411** |
+| TTT eval time | 144s (1,238 chunks) |
+| Model size (int8+zlib) | **15.03 MB** (under 16 MB budget) |
+| PyTorch version | 2.6.0 |
+
+**Observations:**
+- Confirms Run 11 config works on 2×H100 — 1.2411 vs Run 11's 1.2077 (fewer steps → higher BPB, as expected)
+- TTT contribution: -0.0009 BPB (1.2420 → 1.2411)
+
+### Run D — SP8192 Combo Slim + TTT (re-run), 2×H100 (2026-04-26)
+
+> **⚠️ SLM INVALID:** Originally logged as "SLM k=0.6" but RunPod had commit `d7af1ec` (no SLM code). This run is a valid Run A repeat.
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-26 |
+| GPUs | 2× H100 |
+| Technique | SP8192 + Score-First TTT + LeakyReLU² + QK-Gain 5.0 + Headwise + MODEL_DIM=448 (SLM was set but code absent) |
+| Params | 16,364,616 (~16.4M) |
+| Vocab | 8192 (SentencePiece BPE) |
+| Steps completed | 2,652 / 20,000 (hit 10-min wall clock cap) |
+| Step avg | 226 ms |
+| Peak VRAM | 10,570 MiB |
+| **val_bpb (int8+zlib)** | **1.2408** |
+| **val_bpb (TTT)** | **1.2396** |
+| TTT eval time | 145s (1,238 chunks) |
+| Model size (int8+zlib) | **15.08 MB** (under 16 MB budget) |
+| PyTorch version | 2.6.0 |
+
+**Observations:**
+- ~~SLM k=0.6 improves over no-SLM: 1.2396 vs Run A's 1.2411 (-0.0015)~~ **INVALID** — SLM code not present; difference is run-to-run noise
+- ~~More steps than Run A (2,652 vs 2,572) — SLM skips easy tokens~~ Step count variance is normal (±100 steps between identical runs)
+
+### Run H — SP8192 Combo Slim (no TTT ablation), 2×H100 (2026-04-26)
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-26 |
+| GPUs | 2× H100 |
+| Technique | SP8192 + LeakyReLU² + QK-Gain 5.0 + Headwise + MODEL_DIM=448 (NO TTT, NO SLM) |
+| Params | 16,364,616 (~16.4M) |
+| Vocab | 8192 (SentencePiece BPE) |
+| Steps completed | 2,541 / 20,000 (hit 10-min wall clock cap) |
+| Step avg | 236 ms |
+| Peak VRAM | 10,570 MiB |
+| **val_bpb (int8+zlib)** | **1.2432** |
+| Model size (int8+zlib) | **15.04 MB** (under 16 MB budget) |
+| PyTorch version | 2.6.0 |
+
+**Observations:**
+- TTT ablation: Run H (no TTT) 1.2432 vs Run A (TTT) 1.2411 — **TTT contributes -0.0021 BPB**
+- Confirms TTT is worth the eval-time cost even on 2×H100
+
+### Run 13 — SP8192 Combo Slim + TTT (re-run), 2×H100 (2026-04-26)
+
+> **⚠️ SLM INVALID:** Originally logged as "SLM k=0.8" but RunPod had commit `d7af1ec` (no SLM code). This run is a valid Run A repeat.
+
+| Item | Value |
+|---|---|
+| Date | 2026-04-26 |
+| GPUs | 2× H100 |
+| Technique | SP8192 + Score-First TTT + LeakyReLU² + QK-Gain 5.0 + Headwise + MODEL_DIM=448 (SLM was set but code absent) |
+| Params | 16,364,616 (~16.4M) |
+| Vocab | 8192 (SentencePiece BPE) |
+| Steps completed | 2,749 / 20,000 (hit 10-min wall clock cap) |
+| Step avg | 218 ms |
+| **val_bpb (TTT)** | **1.2384** |
+| Model size (int8+zlib) | **15.09 MB** (under 16 MB budget) |
+| PyTorch version | 2.6.0 |
+
+**Observations:**
+- ~~**Best 2×H100 run** — SLM k=0.8 is optimal ratio from sweep~~ **INVALID** — SLM code not present
+- BPB variance across Run A repeats: A=1.2411, D=1.2396, 13=1.2384 (spread ±0.0014, normal noise)
+- Step count variance: A=2,572, D=2,652, 13=2,749 (spread ±89 steps, normal)
+
+### Runs A–H–D–13 — SP8192 2×H100 Ablation Summary
+
+> **⚠️ SLM INVALID for D and 13** — see ‡ note in summary table. SLM deltas below are noise, not real.
+
+| Run | TTT | SLM (claimed) | val_bpb | TTT Δ | SLM Δ |
+|-----|-----|---------------|---------|-------|-------|
+| H | No | No | 1.2432 | — | — |
+| A | Yes | No | 1.2411 | -0.0021 | — |
+| D‡ | Yes | ~~k=0.6~~ none | 1.2396 | -0.0021 | ~~-0.0015~~ noise |
+| 13‡ | Yes | ~~k=0.8~~ none | 1.2384 | -0.0021 | ~~-0.0027~~ noise |
+
 ## Techniques That Worked
 
 _Add entries as we discover things._
 
 | Technique | Impact on BPB | Why it works |
 |---|---|---|
-| Gated Attention (headwise) | 1.2653 (compressed), fits 16 MB | Sigmoid gate after SDPA lets model suppress uninformative heads per token. Nearly free: +37K params, no speed penalty. |
+| **SP8192 vocab scaling** | 1.2411 (2×H100) vs 1.2649 SP1024 = **-0.024 BPB** | Bigger vocab = fewer tokens per byte = lower BPB. Single biggest lever. All top 8 leaderboard entries use SP4096/SP8192. Paper: "Scaling Laws with Vocabulary" (NeurIPS 2024). |
+| **Score-First TTT** | -0.0021 BPB (1.2432→1.2411) | Eval-time fine-tuning: adapt model to validation distribution. Legal under PG rules (score before update). Source: @dexhunter (PG competition). |
+| Gated Attention (headwise) | 1.2653 (compressed), fits 16 MB | Sigmoid gate after SDPA lets model suppress uninformative heads per token. Nearly free: +37K params, no speed penalty. Original technique by James Vo. |
+| LeakyReLU² | -0.0008 BPB vs baseline (1.2641 vs 1.2649) | Free activation swap — no extra params, no speed cost. Used by PG ranks 10-11. |
 
 ## Techniques That Didn't Work
 
@@ -603,6 +780,7 @@ _Add entries as we discover things._
 |---|---|---|---|
 | Gated Attention (elementwise) | Better BPB than headwise | 1.2602 BPB but 17.87 MB (over budget) | +2.36M params makes compressed model too large. Marginal BPB gain (+0.005) not worth the cost. |
 | QK-Gain 5.0 (on SP1024) | Better attention scaling | 1.2719 BPB (worse than headwise 1.2653) | 15% slower steps (210ms vs 182ms), higher VRAM (13GB vs 10GB). QK-Gain 5.0 likely needs SP8192 to be effective. |
+| SLM / Rho-1 (all ratios) | Better per-step learning by filtering easy tokens | k=0.6: +0.155 BPB, k=0.8: +0.024, k=0.95: +0.002 — ALL worse than no-SLM | At 17M params, model needs every gradient signal. Rho-1 paper tested at 1B+; doesn't transfer down. Simple loss-threshold (Option A) too crude without reference model. Paper: "Not All Tokens Are What You Need" (NeurIPS 2024). |
 
 ## Key Insights
 
@@ -612,6 +790,10 @@ _High-level takeaways that apply beyond the competition._
 2. Model still improving at wall clock cutoff — not converged, more throughput = better score
 3. int8+zlib compression is essentially free (1.3033 → 1.3045, only +0.001 BPB degradation)
 4. SP8192 dataset is NOT in the official PG repo (`willdepueoai/parameter-golf`). It's hosted on Kevin Clark's fork: `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80`. All top 5 submissions (ranks 1-5) use this source.
+5. **SLM (Rho-1) doesn't work at 17M scale** — validated in Session 7 with working code. Every ratio (k=0.6 to k=0.95) hurts. Small models need all tokens; the paper's 1B+ results don't transfer down.
+6. **Techniques stack cleanly** — SP8192 + TTT + LeakyReLU² + headwise + QKG5 all combine without interference. Best 2×H100: 1.2411 BPB (Run A). *(SLM stacking claim retracted pending validation.)*
+7. **3-seed reproducibility confirmed** — SP8192 combo slim + TTT on 8×H100 gives mean 1.2073 BPB (std ±0.0006). Results are stable across random seeds.
+8. **Total cost: ~$240+ across 30+ experiments** — systematic ablation approach validated each technique individually before stacking.
 
 ## On Metric Choice & Goodhart's Law
 
