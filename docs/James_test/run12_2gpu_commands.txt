@@ -4,8 +4,11 @@
 # This file is for session-specific experiments only.
 # -----------------------------------------------------------------------
 #
-# Elementwise + MQA sweep — 2×H100 RunPod
-# 4 runs testing elementwise gated attention and MQA at reduced dims to fit 16 MB.
+# Int6 SDClip + Elementwise dim sweep — 2×H100 RunPod
+# 3 runs testing int6+brotli quantization (PG ranks 1-9) with elementwise
+# at dim=448, 480, 512 to find the sweet spot under 16 MB.
+# E1 (int8+zlib, dim=448) was 1.2338 BPB but 16.67 MB (over by 0.67 MB).
+# Int6+brotli should save ~25% on artifact size.
 
 # === 1. Setup (skip if already done) ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
@@ -18,7 +21,7 @@ git pull origin James-experiment
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-pip install huggingface_hub
+pip install huggingface_hub brotli
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
@@ -28,12 +31,11 @@ MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fi
 
 cd ..
 
-# === 4. Run elementwise + MQA sweep (4 runs, ~40 min) ===
-bash runs/run_elementwise_mqa_2gpu.sh
+# === 4. Run int6 sweep (3 runs, ~30 min) ===
+bash runs/run_int6_sweep_2gpu.sh
 
 # === Expected output ===
-# E1: Elementwise dim=448 GQA      → probably over 16 MB, BPB ceiling
-# E2: Elementwise dim=416 GQA      → should fit, compare to Run A (1.2411)
-# E3: MQA dim=448 headwise         → MQA on SP8192 for first time
-# E4: MQA + Elementwise dim=416    → combo, compare to Run A (1.2411)
+# I1: Elem dim=448 int6  → should fit (~12.5 MB), compare BPB to E1 (1.2338)
+# I2: Elem dim=480 int6  → bigger model, should fit (~14 MB)
+# I3: Elem dim=512 int6  → full dim, should fit (~13.4 MB), best BPB potential
 # Winner = lowest BPB that fits under 16 MB → goes to 8×H100
