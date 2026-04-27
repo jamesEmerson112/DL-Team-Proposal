@@ -1,8 +1,20 @@
+# SLM Validation Runs — 2×H100 RunPod Setup
+# These are the FIRST real SLM runs. All previous "SLM" runs were invalid
+# (RunPod had commit d7af1ec which predates SLM code).
+
+# === 1. Setup ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
-git fetch origin 
+git fetch origin
 git checkout James-experiment
 git pull origin James-experiment
+
+# === 2. Verify SLM code exists ===
+# CRITICAL: must be >0 or SLM won't work
+grep -c "slm_enabled" parameter-golf/train_gpt.py
+# Expected: 3+ matches
+
+# === 3. Install deps ===
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -10,23 +22,18 @@ pip install huggingface_hub
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
-# Download SP8192 dataset (~5-10 min)
+# === 4. Download SP8192 dataset (~5-10 min) ===
 rm -f data/manifest.json
 MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
 
 cd ..
 
-# ===========================================================================
-# RUN: SP8192 combo slim + SLM k=0.8 (2xH100) — "money shot"
-# Full combo: SP8192 + TTT + LeakyReLU² + QK-Gain 5.0 + headwise +
-# MODEL_DIM=448 + SLM k=0.8 (best ratio from sweep).
-# Run D (k=0.6) got 1.2396 BPB. k=0.8 won the SLM sweep.
-# Compare against Run 11 (8xH100, 1.2077 BPB).
-# ===========================================================================
-source runs/configs/sp8192_combo_slim.env
-echo "VERIFY: GATED_ATTN=$GATED_ATTN VOCAB_SIZE=$VOCAB_SIZE ACTIVATION=$ACTIVATION MODEL_DIM=$MODEL_DIM TTT_MODE=$TTT_MODE"
-export NGPUS=2
-export SLM_ENABLED=1
-export SLM_RATIO=0.8
-export RUN_ID=sp8192_combo_slim_slm_k80_2gpu
-bash runs/parameter_golf_baseline.sh
+# === 5. Run SLM validation (4 runs, ~50 min) ===
+bash runs/run_slm_validation_2gpu.sh
+
+# === Expected output ===
+# S1: SP1024 GQA + SLM k=0.6   → compare to 1.2649 (Run 6v2)
+# S2: SP8192 combo + SLM k=0.6 → compare to 1.2411 (Run A)
+# S3: SP8192 combo + SLM k=0.7 → compare to 1.2411 (Run A)
+# S4: SP8192 combo + SLM k=0.8 → compare to 1.2411 (Run A)
+# Winner (lowest BPB among S2-S4) → goes to 8×H100
