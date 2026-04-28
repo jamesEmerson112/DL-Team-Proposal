@@ -1415,11 +1415,7 @@ def main() -> None:
         for micro_step in range(grad_accum_steps):
             if distributed:
                 model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
-            # Paper #13: variable sequence length curriculum
-            # First half of the 10-min wall clock uses shorter sequences for faster updates,
-            # second half returns to full 1024-token context.
-            curr_seq_len = 512 if (max_wallclock_ms is not None and elapsed_ms < 0.5 * max_wallclock_ms) else args.train_seq_len
-            x, y = train_loader.next_batch(args.train_batch_tokens, curr_seq_len, grad_accum_steps)
+            x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                 loss = model(x, y)
             train_loss += loss.detach()
