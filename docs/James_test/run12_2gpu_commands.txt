@@ -88,3 +88,23 @@ bash runs/run_combined_2gpu.sh
 # bash runs/run_gptq_tune_trimmed_2gpu.sh   # GPTQ only (~63 min)
 # bash runs/run_resformer_sweep_2gpu.sh      # ResFormer only (~104 min)
 # bash runs/run_gptq_tune_2gpu.sh            # Full GPTQ 8-run (~130 min)
+
+# === 9. V2 Factorial — Fork of Rank 1 + Our Techniques (~117 min, 9 runs) ===
+#
+# Forked rank 1's train_gpt.py (1.0810 BPB) as train_gpt_v2.py.
+# Full leaderboard stack: FA3, 11L, 4×MLP, depth recurrence (3-4-5 loop),
+# parallel residuals, sigmoid skip gates, partial RoPE, XSA, MuonEq-R,
+# EMA, GPTQ int6+brotli.
+#
+# 3×3 factorial: (PR vs RF vs Both) × (No Gate vs Headwise vs Elementwise)
+#   F1: PR + No Gate (CONTROL = rank 1 default)
+#   F2: PR + Headwise Gate         F3: PR + Elementwise Gate
+#   F4: RF + No Gate               F5: RF + Headwise Gate
+#   F6: RF + Elementwise Gate      F7: PR+RF + No Gate
+#   F8: PR+RF + Headwise Gate      F9: PR+RF + Elementwise Gate
+#
+# NOTE: Requires Flash Attention 3 (H100 only):
+#   pip install --no-cache-dir \
+#     "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+#
+bash runs/run_v2_factorial_2gpu.sh
