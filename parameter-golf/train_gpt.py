@@ -102,6 +102,11 @@ class Hyperparameters:
     slm_enabled = os.environ.get("SLM_ENABLED", "0") == "1"
     slm_ratio = float(os.environ.get("SLM_RATIO", "0.6"))
 
+    # Value Residual Learning (ResFormer, ACL 2025)
+    # Blend layer 0's V with each subsequent layer's V: v = (1-alpha)*v + alpha*v0
+    # Fights over-smoothing, equivalent to 16% more params. 0.0 = disabled.
+    value_residual_alpha = float(os.environ.get("VALUE_RESIDUAL_ALPHA", "0.0"))
+
     # Quantization: "int8_zlib" (default), "int6_brotli" (PG ranks 1-9)
     # int6_brotli uses SDClip (k * std) instead of quantile clipping, int6 for matrices,
     # int8 for embeddings, and brotli compression. Saves ~25% artifact size.
@@ -905,6 +910,13 @@ def gptq_sequential_quantize(
     was_training = model.training
     model.eval()
 
+    # Save original weights — sequential quantization modifies them in-place for
+    # calibration, but quantize_state_dict_int6_sdclip needs the originals.
+    saved_weights: dict[str, Tensor] = {}
+    for i, block in enumerate(model.blocks):
+        for name, param in block.named_parameters():
+            saved_weights[f"blocks.{i}.{name}"] = param.data.clone()
+
     for block_idx in range(num_blocks):
         block = model.blocks[block_idx]
         print(f"gptq_sequential: quantizing block {block_idx}/{num_blocks}", flush=True)
@@ -995,6 +1007,16 @@ def gptq_sequential_quantize(
                 W_deq = Q.float() * s.float().unsqueeze(1)
                 param_module.weight.data = W_deq.to(device=device, dtype=param_module.weight.dtype)
                 all_hessians[wname] = H
+
+    # Restore original weights — the in-place dequantized weights were only needed
+    # for calibration. quantize_state_dict_int6_sdclip will do the final quantization
+    # using the improved Hessians collected here.
+    for wname, orig_data in saved_weights.items():
+        parts = wname.split(".")
+        module = model
+        for p in parts[:-1]:
+            module = getattr(module, p) if not p.isdigit() else module[int(p)]
+        getattr(module, parts[-1]).data = orig_data
 
     model.train(was_training)
     return all_hessians
@@ -1430,7 +1452,9 @@ class CausalSelfAttention(nn.Module):
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(self.head_dim, base=rope_base)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, v0: Tensor | None = None, vr_alpha: float = 0.0) -> Tensor | tuple[Tensor, Tensor]:
+        """Forward pass. If vr_alpha > 0 and v0 is None, returns (output, v) for V₀ caching.
+        If v0 is provided, blends it with current V before attention (ResFormer)."""
         bsz, seqlen, dim = x.shape
         # GPTQ hook: save input to QKV projections for Hessian collection
         if getattr(self, "_save_gptq", False):
@@ -1445,6 +1469,10 @@ class CausalSelfAttention(nn.Module):
         q = q_raw.reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.c_v(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        # ResFormer: cache V from layer 0, or blend V₀ into current layer's V
+        cache_v = (vr_alpha > 0 and v0 is None)  # Layer 0: need to return V for caching
+        if v0 is not None and vr_alpha > 0:
+            v = (1 - vr_alpha) * v + vr_alpha * v0
         # Step 2: Normalize Q and K so dot products don't explode
         q = F.rms_norm(q, (q.size(-1),))
         k = F.rms_norm(k, (k.size(-1),))
@@ -1457,6 +1485,7 @@ class CausalSelfAttention(nn.Module):
         # Step 5: The actual attention — softmax(Q·Kᵀ/√d) · V with causal mask
         #         Uses FlashAttention kernel under the hood (memory-efficient, no full NxN matrix)
         #         GQA: repeat K,V heads to match Q heads (e.g. 4 KV → 8 Q, repeat 2×)
+        v_before_repeat = v  # Save pre-repeat V for ResFormer caching
         if self.num_kv_heads != self.num_heads:
             rep = self.num_heads // self.num_kv_heads
             k = k.repeat_interleave(rep, dim=1)
@@ -1486,7 +1515,10 @@ class CausalSelfAttention(nn.Module):
         # GPTQ hook: save input to output projection for Hessian collection
         if getattr(self, "_save_gptq", False):
             self._gptq_o_in = y.detach()
-        return self.proj(y)
+        out = self.proj(y)
+        if cache_v:
+            return out, v_before_repeat  # Return V for caching (layer 0)
+        return out
 
 
 class MLP(nn.Module):
@@ -1536,12 +1568,18 @@ class Block(nn.Module):
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.resid_mix = nn.Parameter(torch.stack((torch.ones(dim), torch.zeros(dim))).float())
 
-    def forward(self, x: Tensor, x0: Tensor) -> Tensor:
+    def forward(self, x: Tensor, x0: Tensor, v0: Tensor | None = None, vr_alpha: float = 0.0) -> Tensor | tuple[Tensor, Tensor]:
         mix = self.resid_mix.to(dtype=x.dtype)
         x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
-        attn_out = self.attn(self.attn_norm(x))
+        attn_result = self.attn(self.attn_norm(x), v0=v0, vr_alpha=vr_alpha)
+        if isinstance(attn_result, tuple):
+            attn_out, v_cached = attn_result  # Layer 0: attention returned V for caching
+        else:
+            attn_out, v_cached = attn_result, None
         x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
         x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x))
+        if v_cached is not None:
+            return x, v_cached
         return x
 
 
@@ -1563,10 +1601,12 @@ class GPT(nn.Module):
         activation: str = "relu2",
         slm_enabled: bool = False,
         slm_ratio: float = 0.6,
+        value_residual_alpha: float = 0.0,
     ):
         super().__init__()
         self.slm_enabled = slm_enabled
         self.slm_ratio = slm_ratio
+        self.value_residual_alpha = value_residual_alpha
         if logit_softcap <= 0.0:
             raise ValueError(f"logit_softcap must be positive, got {logit_softcap}")
         self.tie_embeddings = tie_embeddings
@@ -1609,14 +1649,20 @@ class GPT(nn.Module):
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         x0 = x
+        vr_alpha = self.value_residual_alpha
+        v0: Tensor | None = None  # Cached V from layer 0 (ResFormer)
         skips: list[Tensor] = []
         for i in range(self.num_encoder_layers):
-            x = self.blocks[i](x, x0)
+            result = self.blocks[i](x, x0, v0=v0, vr_alpha=vr_alpha)
+            if isinstance(result, tuple):
+                x, v0 = result  # Layer 0 returned V for caching
+            else:
+                x = result
             skips.append(x)
         for i in range(self.num_decoder_layers):
             if skips:
                 x = x + self.skip_weights[i].to(dtype=x.dtype)[None, None, :] * skips.pop()
-            x = self.blocks[self.num_encoder_layers + i](x, x0)
+            x = self.blocks[self.num_encoder_layers + i](x, x0, v0=v0, vr_alpha=vr_alpha)
         x = self.final_norm(x)
         if self.tie_embeddings:
             logits_proj = F.linear(x, self.tok_emb.weight)
@@ -1759,6 +1805,7 @@ def main() -> None:
         activation=args.activation,
         slm_enabled=args.slm_enabled,
         slm_ratio=args.slm_ratio,
+        value_residual_alpha=args.value_residual_alpha,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -2124,14 +2171,20 @@ def main() -> None:
         # Step 3: Embedding Hessian (token frequency-based)
         if args.gptq_embed:
             log0("gptq:computing embedding Hessian from calibration token frequencies...")
-            vocab_size = base_model.tok_emb.weight.shape[0]
-            embed_H = torch.zeros(vocab_size, vocab_size, dtype=torch.float32)
+            vocab_size, dim = base_model.tok_emb.weight.shape
+            # Compute frequency-weighted column correlation: H = W^T @ diag(freq) @ W → [dim, dim]
+            # GPTQ needs H matching column count of W=[vocab, dim], so H must be [dim, dim]
+            freq = torch.zeros(vocab_size, dtype=torch.float32)
             for seq in calib_seqs:
                 tokens = seq.flatten().cpu()
                 for tok in tokens:
-                    embed_H[tok, tok] += 1.0
+                    freq[tok.item()] += 1.0
+            freq = freq / freq.sum().clamp_min(1e-10)
+            W = base_model.tok_emb.weight.data.detach().cpu().float()
+            W_scaled = W * freq.unsqueeze(1).sqrt()  # [vocab, dim] weighted by sqrt(freq)
+            embed_H = W_scaled.t() @ W_scaled  # [dim, dim]
             damp = args.gptq_percdamp * embed_H.diag().mean().clamp_min(1e-6)
-            embed_H += damp * torch.eye(vocab_size)
+            embed_H += damp * torch.eye(dim)
             gptq_hessians["tok_emb.weight"] = embed_H
 
         del calib_seqs

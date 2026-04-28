@@ -1,18 +1,24 @@
 #!/bin/bash
 
-# GPTQ Quality Tuning (Trimmed) — Close the Gap to Kevin Clark
+# Combined Run — GPTQ Tuning + ResFormer Sweep (2×H100)
 #
-# 3 runs (Q0 baseline already done, Q2/Q4/Q5/Q6 deferred):
-#   Q0: [DONE] Baseline — 1.2035 pre-Q, 1.2579 TTT, gap +0.0544
-#   Q1: Sequential block-by-block quantization      ~25 min  ← biggest suspected fix
+# Part A: GPTQ Quality Tuning (3 runs, ~63 min)
+#   Q1: Sequential block-by-block quantization      ~25 min
 #   Q3: GPTQ on embedding layer                     ~13 min
 #   Q7: All combined (seq + hooks + embed)          ~25 min
 #
-# Deferred to follow-up session: Q2 (hooks alone), Q6 (seq+hooks)
+# Part B: ResFormer Alpha Sweep (5 runs, ~65 min)
+#   R0: alpha=0.0 (control)                          ~13 min
+#   R1: alpha=0.1                                    ~13 min
+#   R2: alpha=0.3                                    ~13 min
+#   R3: alpha=0.5                                    ~13 min
+#   R4: alpha=0.7                                    ~13 min
+#
+# Total: 8 runs, ~128 min (~2h8m)
+# Config variants (R5-R7) deferred — need best alpha from Part B first.
 #
 # Base config: dim=512, 10L, MHA, elementwise + GPTQ int7 + train data
-# Usage (from repo root):  bash runs/run_gptq_tune_trimmed_2gpu.sh
-# Expected time: ~63 min total
+# Usage (from repo root):  bash runs/run_combined_2gpu.sh
 
 set -uo pipefail
 
@@ -23,7 +29,7 @@ PG_DIR="$REPO_ROOT/parameter-golf"
 BASE_CONFIG="$REPO_ROOT/runs/configs/gptq_tune_10L_mha.env"
 
 echo "============================================"
-echo "  GPTQ Quality Tuning (Trimmed) — 2×H100"
+echo "  Combined: GPTQ Tuning + ResFormer — 2×H100"
 echo "  $(date)"
 echo "============================================"
 
@@ -35,23 +41,24 @@ import sys
 with open('parameter-golf/train_gpt.py') as f:
     code = f.read()
 checks = {
-    'GPTQ_SEQUENTIAL env': 'GPTQ_SEQUENTIAL' in code,
-    'GPTQ_USE_HOOKS env': 'GPTQ_USE_HOOKS' in code,
-    'GPTQ_EMBED env': 'GPTQ_EMBED' in code,
-    'gptq_sequential_quantize fn': 'gptq_sequential_quantize' in code,
-    'gptq_collect_hessians_with_hooks fn': 'gptq_collect_hessians_with_hooks' in code,
+    'GPTQ_SEQUENTIAL': 'GPTQ_SEQUENTIAL' in code,
+    'GPTQ_USE_HOOKS': 'GPTQ_USE_HOOKS' in code,
+    'GPTQ_EMBED': 'GPTQ_EMBED' in code,
+    'gptq_sequential_quantize': 'gptq_sequential_quantize' in code,
+    'VALUE_RESIDUAL_ALPHA': 'VALUE_RESIDUAL_ALPHA' in code,
+    'vr_alpha blending': 'vr_alpha' in code,
 }
 all_ok = all(checks.values())
 for name, ok in checks.items():
     print(f'  {chr(10003) if ok else chr(10007)} {name}')
 print(f'\nPreflight: {\"PASS\" if all_ok else \"FAIL\"} ({sum(checks.values())}/{len(checks)})')
 if not all_ok:
-    print('ERROR: GPTQ tuning code not found. Did you pull the latest branch?')
+    print('ERROR: Required code not found. Did you pull the latest branch?')
     sys.exit(1)
 " || exit 1
 
 # --- Helper ---
-run_tune() {
+run_experiment() {
     local label="$1"
     local run_id="$2"
     shift 2
@@ -69,7 +76,7 @@ run_tune() {
         export "$override"
     done
 
-    echo "VERIFY: GPTQ_SEQUENTIAL=$GPTQ_SEQUENTIAL GPTQ_USE_HOOKS=$GPTQ_USE_HOOKS GPTQ_EMBED=$GPTQ_EMBED GPTQ_PERCDAMP=$GPTQ_PERCDAMP"
+    echo "VERIFY: GPTQ_SEQUENTIAL=$GPTQ_SEQUENTIAL GPTQ_USE_HOOKS=$GPTQ_USE_HOOKS GPTQ_EMBED=$GPTQ_EMBED VALUE_RESIDUAL_ALPHA=$VALUE_RESIDUAL_ALPHA"
 
     if bash "$REPO_ROOT/runs/parameter_golf_baseline.sh"; then
         echo "$label: OK"
@@ -78,24 +85,44 @@ run_tune() {
     fi
 }
 
-# ==========================================================================
-# Q0: SKIP — already completed (1.2035 pre-Q, 1.2579 TTT, gap +0.0544)
-# ==========================================================================
-run_tune "Q1: Sequential block quantization" "gptq_tune_sequential" \
+# ==========================================
+# PART A: GPTQ Quality Tuning (Q0 already done)
+# ==========================================
+echo ""
+echo "========== PART A: GPTQ TUNING =========="
+echo ""
+
+run_experiment "Q1: Sequential block quantization" "gptq_tune_sequential" \
     "GPTQ_SEQUENTIAL=1"
-# ==========================================================================
-run_tune "Q3: GPTQ on embeddings" "gptq_tune_embed" \
+run_experiment "Q3: GPTQ on embeddings" "gptq_tune_embed" \
     "GPTQ_EMBED=1"
-# ==========================================================================
-run_tune "Q7: All combined" "gptq_tune_all" \
+run_experiment "Q7: All GPTQ combined" "gptq_tune_all" \
     "GPTQ_SEQUENTIAL=1" "GPTQ_USE_HOOKS=1" "GPTQ_EMBED=1"
 
-# ==========================================================================
+# ==========================================
+# PART B: ResFormer Alpha Sweep
+# ==========================================
+echo ""
+echo "========== PART B: RESFORMER SWEEP =========="
+echo ""
+
+run_experiment "R0: alpha=0.0 (control)" "resformer_a0" \
+    "VALUE_RESIDUAL_ALPHA=0.0"
+run_experiment "R1: alpha=0.1" "resformer_a01" \
+    "VALUE_RESIDUAL_ALPHA=0.1"
+run_experiment "R2: alpha=0.3" "resformer_a03" \
+    "VALUE_RESIDUAL_ALPHA=0.3"
+run_experiment "R3: alpha=0.5" "resformer_a05" \
+    "VALUE_RESIDUAL_ALPHA=0.5"
+run_experiment "R4: alpha=0.7" "resformer_a07" \
+    "VALUE_RESIDUAL_ALPHA=0.7"
+
+# ==========================================
 # RESULTS SUMMARY
-# ==========================================================================
+# ==========================================
 echo ""
 echo "############################################################"
-echo "  GPTQ QUALITY TUNING (TRIMMED) — RESULTS"
+echo "  COMBINED RESULTS"
 echo "  $(date)"
 echo "############################################################"
 echo ""
@@ -104,10 +131,17 @@ python3 -c "
 import os, re
 
 runs = [
-    ('Q0', 'gptq_tune_baseline',   'Baseline (current)'),
+    ('', '', '--- GPTQ TUNING ---'),
+    ('Q0', 'gptq_tune_baseline',   'Baseline (done)'),
     ('Q1', 'gptq_tune_sequential', 'Sequential blocks'),
     ('Q3', 'gptq_tune_embed',      'GPTQ embeddings'),
-    ('Q7', 'gptq_tune_all',        'All combined'),
+    ('Q7', 'gptq_tune_all',        'All GPTQ combined'),
+    ('', '', '--- RESFORMER ---'),
+    ('R0', 'resformer_a0',    'alpha=0.0 (ctrl)'),
+    ('R1', 'resformer_a01',   'alpha=0.1'),
+    ('R2', 'resformer_a03',   'alpha=0.3'),
+    ('R3', 'resformer_a05',   'alpha=0.5'),
+    ('R4', 'resformer_a07',   'alpha=0.7'),
 ]
 
 pg_dir = '$PG_DIR'
@@ -117,6 +151,9 @@ print(f'  {\"Run\":>3} | {\"Config\":<20} | {\"Pre-Q BPB\":>9} | {\"TTT BPB\":>8
 print(f'  {\"-\"*3} | {\"-\"*20} | {\"-\"*9} | {\"-\"*8} | {\"-\"*8} | {\"-\"*10} | {\"-\"*6}')
 
 for label, run_id, desc in runs:
+    if not run_id:
+        print(f'  {desc}')
+        continue
     log_file = os.path.join(pg_dir, 'logs', f'{run_id}.txt')
     if not os.path.isfile(log_file):
         print(f'  {label:>3} | {desc:<20} | {na:>9} | {na:>8} | {na:>8} | {na:>10} | {na:>6}')
@@ -146,8 +183,8 @@ for label, run_id, desc in runs:
     print(f'  {label:>3} | {desc:<20} | {pre_bpb:>9} | {ttt_bpb:>8} | {gap:>8} | {sz:>10} | {gptq_t:>6}')
 
 print()
-print('  Target: GPTQ gap < 0.03 (halfway to Kevin Clark\\'s 0.012)')
-print('  Current gap: ~0.05 (from benchmark sweep)')
+print('  Q0 baseline: pre-Q 1.2035, TTT 1.2579, gap +0.0544')
+print('  GPTQ target: gap < 0.03 | ResFormer target: pre-Q < 1.2035')
 "
 
 echo ""

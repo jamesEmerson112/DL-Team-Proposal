@@ -1,18 +1,23 @@
 #!/bin/bash
 
-# GPTQ Quality Tuning (Trimmed) — Close the Gap to Kevin Clark
+# ResFormer (Value Residual Learning) Sweep — 2×H100
 #
-# 3 runs (Q0 baseline already done, Q2/Q4/Q5/Q6 deferred):
-#   Q0: [DONE] Baseline — 1.2035 pre-Q, 1.2579 TTT, gap +0.0544
-#   Q1: Sequential block-by-block quantization      ~25 min  ← biggest suspected fix
-#   Q3: GPTQ on embedding layer                     ~13 min
-#   Q7: All combined (seq + hooks + embed)          ~25 min
+# Tests V₀ residual: v = (1-alpha)*v_current + alpha*v_layer0
+# Paper: ResFormer (ACL 2025) — equivalent quality with 16% fewer params.
 #
-# Deferred to follow-up session: Q2 (hooks alone), Q6 (seq+hooks)
+# Alpha sweep + config variants (8 runs):
+#   R0: alpha=0.0 (control, skip if Q0 baseline reusable)  ~13 min
+#   R1: alpha=0.1                                           ~13 min
+#   R2: alpha=0.3                                           ~13 min
+#   R3: alpha=0.5                                           ~13 min
+#   R4: alpha=0.7                                           ~13 min
+#   R5: best alpha, 11L                                     ~13 min
+#   R6: best alpha, GQA (NUM_KV_HEADS=4)                    ~13 min
+#   R7: best alpha, dim=448 headwise                        ~13 min
 #
 # Base config: dim=512, 10L, MHA, elementwise + GPTQ int7 + train data
-# Usage (from repo root):  bash runs/run_gptq_tune_trimmed_2gpu.sh
-# Expected time: ~63 min total
+# Usage (from repo root):  bash runs/run_resformer_sweep_2gpu.sh
+# Expected time: ~104 min total (8 × ~13 min)
 
 set -uo pipefail
 
@@ -23,7 +28,7 @@ PG_DIR="$REPO_ROOT/parameter-golf"
 BASE_CONFIG="$REPO_ROOT/runs/configs/gptq_tune_10L_mha.env"
 
 echo "============================================"
-echo "  GPTQ Quality Tuning (Trimmed) — 2×H100"
+echo "  ResFormer (Value Residual) Sweep — 2×H100"
 echo "  $(date)"
 echo "============================================"
 
@@ -35,23 +40,22 @@ import sys
 with open('parameter-golf/train_gpt.py') as f:
     code = f.read()
 checks = {
-    'GPTQ_SEQUENTIAL env': 'GPTQ_SEQUENTIAL' in code,
-    'GPTQ_USE_HOOKS env': 'GPTQ_USE_HOOKS' in code,
-    'GPTQ_EMBED env': 'GPTQ_EMBED' in code,
-    'gptq_sequential_quantize fn': 'gptq_sequential_quantize' in code,
-    'gptq_collect_hessians_with_hooks fn': 'gptq_collect_hessians_with_hooks' in code,
+    'VALUE_RESIDUAL_ALPHA env': 'VALUE_RESIDUAL_ALPHA' in code,
+    'value_residual_alpha param': 'value_residual_alpha' in code,
+    'vr_alpha in forward': 'vr_alpha' in code,
+    'v0 blending': '(1 - vr_alpha) * v + vr_alpha * v0' in code,
 }
 all_ok = all(checks.values())
 for name, ok in checks.items():
     print(f'  {chr(10003) if ok else chr(10007)} {name}')
 print(f'\nPreflight: {\"PASS\" if all_ok else \"FAIL\"} ({sum(checks.values())}/{len(checks)})')
 if not all_ok:
-    print('ERROR: GPTQ tuning code not found. Did you pull the latest branch?')
+    print('ERROR: ResFormer code not found. Did you pull the latest branch?')
     sys.exit(1)
 " || exit 1
 
 # --- Helper ---
-run_tune() {
+run_resformer() {
     local label="$1"
     local run_id="$2"
     shift 2
@@ -69,7 +73,7 @@ run_tune() {
         export "$override"
     done
 
-    echo "VERIFY: GPTQ_SEQUENTIAL=$GPTQ_SEQUENTIAL GPTQ_USE_HOOKS=$GPTQ_USE_HOOKS GPTQ_EMBED=$GPTQ_EMBED GPTQ_PERCDAMP=$GPTQ_PERCDAMP"
+    echo "VERIFY: VALUE_RESIDUAL_ALPHA=$VALUE_RESIDUAL_ALPHA MODEL_DIM=$MODEL_DIM NUM_LAYERS=$NUM_LAYERS NUM_KV_HEADS=$NUM_KV_HEADS GATED_ATTN=$GATED_ATTN"
 
     if bash "$REPO_ROOT/runs/parameter_golf_baseline.sh"; then
         echo "$label: OK"
@@ -79,23 +83,38 @@ run_tune() {
 }
 
 # ==========================================================================
-# Q0: SKIP — already completed (1.2035 pre-Q, 1.2579 TTT, gap +0.0544)
+# Alpha Sweep (R0-R4): fix config, vary alpha
 # ==========================================================================
-run_tune "Q1: Sequential block quantization" "gptq_tune_sequential" \
-    "GPTQ_SEQUENTIAL=1"
+run_resformer "R0: alpha=0.0 (control)" "resformer_a0" \
+    "VALUE_RESIDUAL_ALPHA=0.0"
+run_resformer "R1: alpha=0.1" "resformer_a01" \
+    "VALUE_RESIDUAL_ALPHA=0.1"
+run_resformer "R2: alpha=0.3" "resformer_a03" \
+    "VALUE_RESIDUAL_ALPHA=0.3"
+run_resformer "R3: alpha=0.5" "resformer_a05" \
+    "VALUE_RESIDUAL_ALPHA=0.5"
+run_resformer "R4: alpha=0.7" "resformer_a07" \
+    "VALUE_RESIDUAL_ALPHA=0.7"
+
 # ==========================================================================
-run_tune "Q3: GPTQ on embeddings" "gptq_tune_embed" \
-    "GPTQ_EMBED=1"
+# Config Variants (R5-R7): use best alpha (UPDATE AFTER ALPHA SWEEP)
+# Default: alpha=0.3 (paper's range). Update BEST_ALPHA after R0-R4 results.
 # ==========================================================================
-run_tune "Q7: All combined" "gptq_tune_all" \
-    "GPTQ_SEQUENTIAL=1" "GPTQ_USE_HOOKS=1" "GPTQ_EMBED=1"
+BEST_ALPHA="${BEST_ALPHA:-0.3}"
+
+run_resformer "R5: best alpha, 11L" "resformer_11L" \
+    "VALUE_RESIDUAL_ALPHA=$BEST_ALPHA" "NUM_LAYERS=11"
+run_resformer "R6: best alpha, GQA" "resformer_gqa" \
+    "VALUE_RESIDUAL_ALPHA=$BEST_ALPHA" "NUM_KV_HEADS=4"
+run_resformer "R7: best alpha, dim=448 headwise" "resformer_dim448" \
+    "VALUE_RESIDUAL_ALPHA=$BEST_ALPHA" "MODEL_DIM=448" "GATED_ATTN=headwise"
 
 # ==========================================================================
 # RESULTS SUMMARY
 # ==========================================================================
 echo ""
 echo "############################################################"
-echo "  GPTQ QUALITY TUNING (TRIMMED) — RESULTS"
+echo "  RESFORMER SWEEP — RESULTS"
 echo "  $(date)"
 echo "############################################################"
 echo ""
@@ -104,10 +123,14 @@ python3 -c "
 import os, re
 
 runs = [
-    ('Q0', 'gptq_tune_baseline',   'Baseline (current)'),
-    ('Q1', 'gptq_tune_sequential', 'Sequential blocks'),
-    ('Q3', 'gptq_tune_embed',      'GPTQ embeddings'),
-    ('Q7', 'gptq_tune_all',        'All combined'),
+    ('R0', 'resformer_a0',    'alpha=0.0 (ctrl)'),
+    ('R1', 'resformer_a01',   'alpha=0.1'),
+    ('R2', 'resformer_a03',   'alpha=0.3'),
+    ('R3', 'resformer_a05',   'alpha=0.5'),
+    ('R4', 'resformer_a07',   'alpha=0.7'),
+    ('R5', 'resformer_11L',   'best alpha, 11L'),
+    ('R6', 'resformer_gqa',   'best alpha, GQA'),
+    ('R7', 'resformer_dim448','best alpha, d448'),
 ]
 
 pg_dir = '$PG_DIR'
@@ -146,8 +169,8 @@ for label, run_id, desc in runs:
     print(f'  {label:>3} | {desc:<20} | {pre_bpb:>9} | {ttt_bpb:>8} | {gap:>8} | {sz:>10} | {gptq_t:>6}')
 
 print()
-print('  Target: GPTQ gap < 0.03 (halfway to Kevin Clark\\'s 0.012)')
-print('  Current gap: ~0.05 (from benchmark sweep)')
+print('  Q0 baseline (no ResFormer): pre-Q 1.2035, TTT 1.2579, gap +0.0544')
+print('  Success = any alpha produces lower pre-Q BPB than 1.2035')
 "
 
 echo ""

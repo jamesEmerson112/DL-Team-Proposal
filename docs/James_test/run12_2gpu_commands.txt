@@ -54,40 +54,8 @@ if not all_ok:
     sys.exit(1)
 "
 
-# === 5. Run GPTQ benchmark (4 variants, ~90 min total) ===
-# Tests 4 GPTQ configurations to find best match for our model:
-#   G1: int7 (clip=63) + AR self-gen
-#   G2: int7 (clip=63) + training data
-#   G3: int6 (clip=31) + AR self-gen
-#   G4: int6 (clip=31) + training data
-# All use k×std clipping (Kevin Clark) + no_grad (not inference_mode).
-# See runs/run_gptq_benchmark_2gpu.sh for details.
-bash runs/run_gptq_benchmark_2gpu.sh
-
-# === 6. Benchmark Sweep — Dim / Layers / Attention (~91 min total) ===
-#
-# Purpose: "thicken" the model to fill budget after GPTQ compression.
-# GPTQ shrinks ~30-50%, so we can afford bigger models (more dim, layers, MHA).
-# Three isolated sweeps, each varying one axis:
-#
-#   Sweep 1 (Dim):    D1=448, D2=512, D3=768, D4=1024  — fix: 9L, GQA
-#   Sweep 2 (Layers): D2=9L, L2=10L, L3=11L            — fix: dim=512, GQA
-#   Sweep 3 (Attn):   D2=GQA, A2=MHA                   — fix: dim=512, 9L
-#
-# D2 (dim=512, 9L, GQA) is shared baseline — runs once, used in all 3 comparisons.
-# All runs: elementwise gated attn + GPTQ int7 (clip=63) + train data calib + TTT.
-#
-bash runs/run_benchmark_sweep_2gpu.sh
-
-# === Expected output ===
-#
-# GPTQ benchmark: table with Pre-Q BPB, Roundtrip BPB, TTT BPB, Gap vs Run A, Size, GPTQ time
-# Benchmark sweep: table with Run, Sweep, Config, Params, Steps, Pre-Q BPB, TTT BPB, GPTQ Size, GPTQ Time
-#
-# Key questions answered:
-#   - Does dim=512 or dim=768 recover more BPB than dim=448 after GPTQ?
-#   - Does 10L or 11L help at dim=512?
-#   - Does MHA beat GQA when budget allows it?
+# === 5. [DONE] GPTQ benchmark (G1-G4) — results in findings.md Session 9 ===
+# === 6. [DONE] Benchmark sweep (D1-D4, L2, L3, A2) — results in findings.md Session 10 ===
 
 # === 7. GPTQ Quality Tuning (~76 min, 4 runs) ===
 #
@@ -102,7 +70,21 @@ bash runs/run_benchmark_sweep_2gpu.sh
 #
 # Deferred to follow-up: Q2 (hooks alone), Q6 (seq+hooks)
 #
-bash runs/run_gptq_tune_trimmed_2gpu.sh
+# === 7+8 Combined: GPTQ Tuning + ResFormer (~128 min, 8 runs) ===
 #
-# Or run full 8-run sweep (includes dampening + hooks, ~130 min):
-# bash runs/run_gptq_tune_2gpu.sh
+# Part A — GPTQ tuning (Q0 already done, 3 runs ~63 min):
+#   Q1: Sequential block-by-block quantization          ~25 min
+#   Q3: GPTQ on embedding layer                         ~13 min
+#   Q7: All GPTQ combined (seq + hooks + embed)         ~25 min
+#
+# Part B — ResFormer alpha sweep (5 runs ~65 min):
+#   R0: alpha=0.0 (control)    R1: 0.1    R2: 0.3    R3: 0.5    R4: 0.7
+#
+# Deferred: Q2/Q6 (hooks), R5-R7 (config variants with best alpha)
+#
+bash runs/run_combined_2gpu.sh
+#
+# Or run separately:
+# bash runs/run_gptq_tune_trimmed_2gpu.sh   # GPTQ only (~63 min)
+# bash runs/run_resformer_sweep_2gpu.sh      # ResFormer only (~104 min)
+# bash runs/run_gptq_tune_2gpu.sh            # Full GPTQ 8-run (~130 min)
