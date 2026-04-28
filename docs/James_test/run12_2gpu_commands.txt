@@ -89,18 +89,20 @@ bash runs/run_benchmark_sweep_2gpu.sh
 #   - Does 10L or 11L help at dim=512?
 #   - Does MHA beat GQA when budget allows it?
 
-# === 7. GPTQ Quality Tuning (~104 min, 8 runs) ===
+# === 7. GPTQ Quality Tuning (~76 min, 4 runs) ===
 #
 # Purpose: close the GPTQ gap from ~0.05 to Kevin Clark's ~0.012 BPB.
 # Base config: dim=512, 10L, MHA, elementwise + GPTQ int7 + train data.
-# Tests 4 improvements:
-#   Q0: Baseline (current GPTQ on new 10L MHA)
-#   Q1: Sequential block-by-block quantization (biggest suspected fix)
-#   Q2: register_forward_hook for Hessian collection
-#   Q3: GPTQ on embedding layer
-#   Q4: Dampening 0.001 (lower)
-#   Q5: Dampening 0.05 (higher)
-#   Q6: Sequential + hooks combo
-#   Q7: All combined
 #
-bash runs/run_gptq_tune_2gpu.sh
+# Trimmed to fit ~1h15m budget:
+#   Q0: Baseline (current GPTQ on new 10L MHA)         ~13 min
+#   Q1: Sequential block-by-block quantization          ~25 min  ← biggest suspected fix
+#   Q3: GPTQ on embedding layer                         ~13 min
+#   Q7: All combined (seq + hooks + embed)              ~25 min
+#
+# Deferred to follow-up: Q2 (hooks alone), Q6 (seq+hooks)
+#
+bash runs/run_gptq_tune_trimmed_2gpu.sh
+#
+# Or run full 8-run sweep (includes dampening + hooks, ~130 min):
+# bash runs/run_gptq_tune_2gpu.sh
