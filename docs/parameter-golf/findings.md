@@ -27,28 +27,33 @@
 
 ## Experiment Runs — 2×H100 (sorted by BPB, best first)
 
-| Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Budget? |
-|-----|-----------|--------|----------|---------|-------|----------|-------------------|---------|
-| E1† | Elementwise dim=448 GQA | ~16.4M | — | **1.2338** | 2,644 | — | 16.67 MB | **No** |
-| 13† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.1990 | 1.2384 | 2,749 | 218ms | 15.09 MB | Yes |
-| D† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.2021 | 1.2396 | 2,652 | 226ms | 15.08 MB | Yes |
-| A† | SP8192 combo slim + TTT | 16.36M | 3.2059 | 1.2411 | 2,572 | 233ms | 15.03 MB | Yes |
-| H† | SP8192 combo slim (no TTT) | 16.36M | 3.2112 | 1.2432 | 2,541 | 236ms | 15.04 MB | Yes |
-| E2† | Elementwise dim=416 GQA | ~14.6M | — | 1.2447 | 2,772 | — | 14.68 MB | Yes |
-| E3† | MQA dim=448 headwise | ~14.3M | — | 1.2509 | 2,979 | — | 14.32 MB | Yes |
-| 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | 17.87 MB | **No** |
-| E4† | MQA + Elementwise dim=416 | ~14.0M | — | 1.2601 | 2,982 | — | 14.02 MB | Yes |
-| 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | 15.77 MB | Yes |
-| 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | 15.77 MB | Yes |
-| 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | 15.77 MB | Yes |
-| 2 | Headwise gated attn* | 17.10M | 2.1366 | 1.2653 | 3,287 | 182ms | 15.75 MB | Yes |
-| 6 | Baseline (GQA) | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | 15.75 MB | Yes |
-| 12 | Baseline (PyTorch 2.6) | 17.06M | 2.1462 | 1.2711 | 3,087 | 194ms | 15.70 MB | Yes |
-| 9 | Headwise + QK-Gain 5.0 | 17.10M | 2.1475 | 1.2719 | 2,861 | 210ms | 15.65 MB | Yes |
-| 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | 16.84 MB | **No** |
-| ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — |
+| Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
+|-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
+| E1† | Elementwise dim=448 GQA | ~16.4M | — | **1.2338** | 2,644 | — | int8 | 16.67 MB | **No** |
+| 13† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.1990 | 1.2384 | 2,749 | 218ms | int8 | 15.09 MB | Yes |
+| D† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.2021 | 1.2396 | 2,652 | 226ms | int8 | 15.08 MB | Yes |
+| A† | SP8192 combo slim + TTT | 16.36M | 3.2059 | 1.2411 | 2,572 | 233ms | int8 | 15.03 MB | Yes |
+| H† | SP8192 combo slim (no TTT) | 16.36M | 3.2112 | 1.2432 | 2,541 | 236ms | int8 | 15.04 MB | Yes |
+| E2† | Elementwise dim=416 GQA | ~14.6M | — | 1.2447 | 2,772 | — | int8 | 14.68 MB | Yes |
+| E3† | MQA dim=448 headwise | ~14.3M | — | 1.2509 | 2,979 | — | int8 | 14.32 MB | Yes |
+| A2‡ | Elem dim=512 9L MHA | 25.4M | 3.2488 | 1.2577 | 2,712 | — | GPTQ | 14.24 MB | Yes |
+| L3‡ | Elem dim=512 11L GQA | 27.3M | 3.2525 | 1.2591 | 2,484 | — | GPTQ | 15.27 MB | Yes |
+| 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | int8 | 17.87 MB | **No** |
+| E4† | MQA + Elementwise dim=416 | ~14.0M | — | 1.2601 | 2,982 | — | int8 | 14.02 MB | Yes |
+| 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | int8 | 15.77 MB | Yes |
+| 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | int8 | 15.77 MB | Yes |
+| 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | int8 | 15.77 MB | Yes |
+| 2 | Headwise gated attn* | 17.10M | 2.1366 | 1.2653 | 3,287 | 182ms | int8 | 15.75 MB | Yes |
+| L2‡ | Elem dim=512 10L GQA | 25.2M | 3.2712 | 1.2664 | 2,682 | — | GPTQ | 14.11 MB | Yes |
+| 6 | Baseline (GQA) | 17.06M | 2.1388 | 1.2667 | 3,500 | 171ms | int8 | 15.75 MB | Yes |
+| D2‡ | Elem dim=512 9L GQA | 23.1M | 3.2765 | 1.2684 | 2,868 | — | GPTQ | 12.94 MB | Yes |
+| 12 | Baseline (PyTorch 2.6) | 17.06M | 2.1462 | 1.2711 | 3,087 | 194ms | int8 | 15.70 MB | Yes |
+| 9 | Headwise + QK-Gain 5.0 | 17.10M | 2.1475 | 1.2719 | 2,861 | 210ms | int8 | 15.65 MB | Yes |
+| 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | int8 | 16.84 MB | **No** |
+| D1‡ | Elem dim=448 9L GQA | 18.1M | 3.3216 | 1.2859 | 2,618 | — | GPTQ | 10.20 MB | Yes |
+| ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep).**
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). GPTQ val_bpb = TTT BPB (post-quant + TTT recovery).**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 
@@ -193,6 +198,41 @@ Ported full GPTQ from PG rank 9 (Marko Sisovic). Algorithm: Frantar et al., "GPT
 | Kevin Clark target | ~35% | ~1.0% | 35× |
 
 Ratios are favorable (well above 1×), but the net tradeoff is negative for model upgrades: GPTQ frees ~5.8 MB for dim=512, but dim=512 only recovers -0.020 BPB while GPTQ costs +0.051. Need to close the gap to Kevin Clark's +0.012 before GPTQ becomes net-positive for bigger models.
+
+### Session 10 — Benchmark Sweep: Dim / Layers / Attention (2×H100, GPTQ, 2026-04-28)
+
+Purpose: "thicken" the model to fill GPTQ budget after compression. GPTQ shrinks ~30-50%, so we can afford bigger models. Three isolated sweeps, each varying one axis. All runs: elementwise gated attn + GPTQ int7 (clip=63) + train data calib + Score-First TTT.
+
+**Sweep results** (2×H100, 10-min wall clock):
+
+| Run | Sweep | Config | Params | Steps | Pre-Q BPB | TTT BPB | GPTQ Gap | Size | Under 16MB? |
+|-----|-------|--------|--------|-------|-----------|---------|----------|------|-------------|
+| D1 | dim | dim=448, 9L, GQA | 18.1M | 2,618 | 1.2322 | 1.2859 | +0.0537 | 10.20 MB | Yes |
+| **D2** | **dim** | **dim=512, 9L, GQA** | **23.1M** | **2,868** | **1.2120** | **1.2684** | **+0.0564** | **12.94 MB** | **Yes** |
+| D3 | dim | dim=768, 9L, GQA | 48.8M | 1,843 | 1.1856 | 1.2287 | +0.0431 | 27.14 MB | No |
+| D4 | dim | dim=1024, 9L, GQA | 83.9M | 1,323 | 1.1869 | 1.2127 | +0.0258 | 46.47 MB | No |
+| L2 | layer | dim=512, 10L, GQA | 25.2M | 2,682 | 1.2083 | 1.2664 | +0.0581 | 14.11 MB | Yes |
+| L3 | layer | dim=512, 11L, GQA | 27.3M | 2,484 | 1.2042 | 1.2591 | +0.0549 | 15.27 MB | Yes |
+| A2 | attn | dim=512, 9L, MHA | 25.4M | 2,712 | 1.2045 | 1.2577 | +0.0532 | 14.24 MB | Yes |
+
+D2 is shared baseline for all 3 sweeps. PG baseline: 1.2244 BPB.
+
+**Projected BPB if GPTQ gap matched Kevin Clark's (~0.012):**
+
+| Run | Pre-Q BPB | Projected TTT BPB | Size | Beats baseline? |
+|-----|-----------|-------------------|------|-----------------|
+| D2 | 1.2120 | ~1.224 | 12.94 MB | Barely (at the line) |
+| L2 | 1.2083 | ~1.220 | 14.11 MB | Yes |
+| **L3** | **1.2042** | **~1.216** | **15.27 MB** | **Yes** |
+| **A2** | **1.2045** | **~1.217** | **14.24 MB** | **Yes** |
+
+**Key findings:**
+
+1. **Pre-quant, everything beats baseline.** Even D2 (1.2120) crushes 1.2244. The model quality is there — compression is the sole bottleneck.
+2. **GPTQ gap ~0.05 BPB is the bottleneck** — 4× worse than Kevin Clark's ~0.012. This single issue holds everything back.
+3. **Bigger models have smaller GPTQ gaps.** D4 (1024) gap is only +0.0258 vs D1 (448) at +0.0537. More parameters = more redundancy for GPTQ to exploit.
+4. **Best under-budget candidates** (if GPTQ gap is fixed to ~0.012): **L3** (11L, 1.2042 pre-Q, 15.27 MB) and **A2** (MHA, 1.2045 pre-Q, 14.24 MB). Both have ~1.204 pre-Q BPB with budget headroom.
+5. **MHA beats GQA by -0.0107 TTT BPB** at +1.3 MB cost (A2 vs D2). Full KV heads improve quality when budget allows.
 
 ---
 
