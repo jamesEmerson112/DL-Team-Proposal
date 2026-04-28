@@ -88,3 +88,19 @@ bash runs/run_benchmark_sweep_2gpu.sh
 #   - Does dim=512 or dim=768 recover more BPB than dim=448 after GPTQ?
 #   - Does 10L or 11L help at dim=512?
 #   - Does MHA beat GQA when budget allows it?
+
+# === 7. GPTQ Quality Tuning (~104 min, 8 runs) ===
+#
+# Purpose: close the GPTQ gap from ~0.05 to Kevin Clark's ~0.012 BPB.
+# Base config: dim=512, 10L, MHA, elementwise + GPTQ int7 + train data.
+# Tests 4 improvements:
+#   Q0: Baseline (current GPTQ on new 10L MHA)
+#   Q1: Sequential block-by-block quantization (biggest suspected fix)
+#   Q2: register_forward_hook for Hessian collection
+#   Q3: GPTQ on embedding layer
+#   Q4: Dampening 0.001 (lower)
+#   Q5: Dampening 0.05 (higher)
+#   Q6: Sequential + hooks combo
+#   Q7: All combined
+#
+bash runs/run_gptq_tune_2gpu.sh

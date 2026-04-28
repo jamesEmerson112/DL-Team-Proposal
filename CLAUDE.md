@@ -147,3 +147,14 @@ Active research + experimentation repository. Code modifications in `parameter-g
   - **Budget Math:** GPTQ compression ratio (0.684×) applied to 5 configs, showing dim=512/11L/MLP3×/elementwise all fit under 16 MB with GPTQ
 - [edit] Updated cross-reference section with current `train_gpt.py` line numbers (GPT class moved 765→1370 after GPTQ additions)
 - [preserved] Original PG Baseline (SP1024, 17M) section and Forward Pass Pipeline unchanged
+
+### 2026-04-28 (Session 10)
+- [feat] Created 7 benchmark env configs (`bench_dim448_elem.env`, `bench_dim512_elem.env`, `bench_dim768_elem.env`, `bench_dim1024_elem.env`, `bench_10L_dim512_elem.env`, `bench_11L_dim512_elem.env`, `bench_mha_dim512_elem.env`) and `runs/run_benchmark_sweep_2gpu.sh`
+- [run] Executed 7-run sweep on 2×H100: dim (448/512/768/1024), layers (9/10/11), attention (GQA/MHA) — all elementwise + GPTQ int7 + train data calib
+- [finding] Pre-quant BPB scales well with model size: D2=1.2120, L3=1.2042, A2=1.2045 — all beat baseline (1.2244) pre-quant
+- [finding] GPTQ gap ~0.05 is the sole bottleneck — 4× worse than Kevin Clark's ~0.012
+- [finding] Bigger models have smaller GPTQ gaps: D4 (dim=1024) gap=0.026, D1 (dim=448) gap=0.054
+- [finding] Best under-budget candidates if GPTQ gap fixed: L3 (11L, 1.2042 pre-Q, 15.27 MB) and A2 (MHA, 1.2045 pre-Q, 14.24 MB)
+- [finding] MHA beats GQA by -0.0107 TTT BPB at +1.3 MB cost (A2 vs D2)
+- [edit] Updated `docs/parameter-golf/findings.md` with Session 10 benchmark sweep results
+- [edit] Updated `docs/James_test/run12_2gpu_commands.txt` with benchmark sweep step

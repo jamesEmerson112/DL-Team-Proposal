@@ -120,6 +120,10 @@ class Hyperparameters:
     gptq_reserve_ms = float(os.environ.get("GPTQ_RESERVE_MS", "30000"))
     gptq_clip_range = int(os.environ.get("GPTQ_CLIP_RANGE", "63"))  # 31=int6, 63=int7 (Kevin Clark rank 5)
     gptq_calib_source = os.environ.get("GPTQ_CALIB_SOURCE", "ar")  # "ar" = AR self-gen, "train" = training data
+    gptq_sequential = os.environ.get("GPTQ_SEQUENTIAL", "0") == "1"  # Sequential block-by-block quantization
+    gptq_use_hooks = os.environ.get("GPTQ_USE_HOOKS", "0") == "1"  # register_forward_hook for Hessian collection
+    gptq_embed = os.environ.get("GPTQ_EMBED", "0") == "1"  # GPTQ on embedding layer (not just simple SDClip)
+    gptq_percdamp = float(os.environ.get("GPTQ_PERCDAMP", "0.01"))  # Dampening factor for Cholesky
 
     # Test-Time Training (Score-First TTT, PG ranks 1-3)
     # "none" = disabled (baseline), "score_first" = legal score-before-update TTT
@@ -760,9 +764,12 @@ def _gptq_init_hessians(model: nn.Module, device: torch.device) -> dict[str, Ten
     return hessians
 
 
-def _gptq_accum_hessians(hessians: dict[str, Tensor], model: nn.Module) -> None:
-    """Accumulate H = X^T X from saved activations (one forward pass)."""
-    for i, block in enumerate(model.blocks):
+def _gptq_accum_hessians(hessians: dict[str, Tensor], model: nn.Module, block_idx: int | None = None) -> None:
+    """Accumulate H = X^T X from saved activations (one forward pass).
+    If block_idx is set, only accumulate for that block (sequential mode).
+    """
+    blocks = [(block_idx, model.blocks[block_idx])] if block_idx is not None else enumerate(model.blocks)
+    for i, block in blocks:
         dim = block.attn.c_q.weight.shape[1]
         hidden_dim = block.mlp.fc.weight.shape[0]
         if hasattr(block.attn, "_gptq_qkv_in"):
@@ -782,16 +789,17 @@ def _gptq_accum_hessians(hessians: dict[str, Tensor], model: nn.Module) -> None:
             hessians[f"blocks.{i}.mlp.proj.weight"] += down_in.t() @ down_in
 
 
-def _gptq_finalize_hessians(hessians: dict[str, Tensor], num_batches: int) -> None:
+def _gptq_finalize_hessians(hessians: dict[str, Tensor], num_batches: int, percdamp: float = 0.01) -> None:
     """Average Hessians, add damping, move to CPU."""
     for name in hessians:
         hessians[name] = hessians[name].cpu() / max(num_batches, 1)
-        damp = 0.01 * torch.diag(hessians[name]).mean().clamp_min(1e-6)
+        damp = percdamp * torch.diag(hessians[name]).mean().clamp_min(1e-6)
         hessians[name] += damp * torch.eye(hessians[name].shape[0])
 
 
 def gptq_collect_hessians_from_tokens(
     model: nn.Module, token_seqs: list[Tensor], device: torch.device,
+    percdamp: float = 0.01,
 ) -> dict[str, Tensor]:
     """Run forward passes on calibration tokens and collect Hessians for GPTQ."""
     hessians = _gptq_init_hessians(model, device)
@@ -824,9 +832,172 @@ def gptq_collect_hessians_from_tokens(
         block.attn.rotary._cos_cached = None
         block.attn.rotary._sin_cached = None
         block.attn.rotary._seq_len_cached = 0
-    _gptq_finalize_hessians(hessians, len(token_seqs))
+    _gptq_finalize_hessians(hessians, len(token_seqs), percdamp=percdamp)
     model.train(was_training)
     return hessians
+
+
+def gptq_collect_hessians_with_hooks(
+    model: nn.Module, token_seqs: list[Tensor], device: torch.device,
+    percdamp: float = 0.01,
+) -> dict[str, Tensor]:
+    """Collect Hessians using register_forward_hook (Kevin Clark approach).
+
+    Instead of manual _save_gptq flags, uses PyTorch hooks on each Linear layer
+    to capture exact inputs. More robust and guaranteed correct.
+    """
+    hessians: dict[str, Tensor] = {}
+    hooks = []
+    # Register hooks on every quantizable Linear layer
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear):
+            continue
+        weight_name = f"{name}.weight"
+        dim = module.weight.shape[1]
+        hessians[weight_name] = torch.zeros(dim, dim, dtype=torch.float32, device=device)
+        def make_hook(wname, d):
+            def hook_fn(mod, inp, out):
+                x = inp[0].detach().float().reshape(-1, d)
+                hessians[wname] += x.t() @ x
+            return hook_fn
+        hooks.append(module.register_forward_hook(make_hook(weight_name, dim)))
+
+    was_training = model.training
+    model.eval()
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        for seq in token_seqs:
+            x = seq[:, :-1].to(device=device, dtype=torch.int64)
+            y = seq[:, 1:].to(device=device, dtype=torch.int64)
+            model(x, y)
+    # Remove hooks
+    for h in hooks:
+        h.remove()
+    # Invalidate Rotary cache
+    for block in model.blocks:
+        block.attn.rotary._cos_cached = None
+        block.attn.rotary._sin_cached = None
+        block.attn.rotary._seq_len_cached = 0
+    _gptq_finalize_hessians(hessians, len(token_seqs), percdamp=percdamp)
+    model.train(was_training)
+    return hessians
+
+
+def gptq_sequential_quantize(
+    model: nn.Module, token_seqs: list[Tensor], device: torch.device,
+    clip_range: int = 63, clip_sigmas: float = 12.85, percdamp: float = 0.01,
+    use_hooks: bool = False,
+) -> dict[str, Tensor]:
+    """Sequential block-by-block GPTQ quantization.
+
+    For each block i (0 → N):
+      1. Run calibration through full model (blocks 0..i-1 already dequantized)
+      2. Collect Hessian for block i only
+      3. Quantize block i's weights with GPTQ
+      4. Replace block i's weights with dequantized(quantized(weights))
+
+    This ensures each block's Hessian reflects the actual quantized inputs it
+    will see at inference, eliminating the full-precision/quantized mismatch.
+    """
+    import copy
+    all_hessians: dict[str, Tensor] = {}
+    num_blocks = len(model.blocks)
+
+    was_training = model.training
+    model.eval()
+
+    for block_idx in range(num_blocks):
+        block = model.blocks[block_idx]
+        print(f"gptq_sequential: quantizing block {block_idx}/{num_blocks}", flush=True)
+
+        if use_hooks:
+            # Hook-based: register hooks only on this block's Linear layers
+            block_hessians: dict[str, Tensor] = {}
+            hooks = []
+            prefix = f"blocks.{block_idx}."
+            for name, module in block.named_modules():
+                if not isinstance(module, nn.Linear):
+                    continue
+                weight_name = f"blocks.{block_idx}.{name}.weight"
+                dim = module.weight.shape[1]
+                block_hessians[weight_name] = torch.zeros(dim, dim, dtype=torch.float32, device=device)
+                def make_hook(wname, d):
+                    def hook_fn(mod, inp, out):
+                        x = inp[0].detach().float().reshape(-1, d)
+                        block_hessians[wname] += x.t() @ x
+                    return hook_fn
+                hooks.append(module.register_forward_hook(make_hook(weight_name, dim)))
+        else:
+            # Manual flag-based: enable only this block
+            block.attn._save_gptq = True
+            block.mlp._save_gptq = True
+            block_hessians = _gptq_init_hessians(model, device)
+            # Zero out all other blocks' Hessians (we only want this block)
+            for key in list(block_hessians.keys()):
+                if not key.startswith(f"blocks.{block_idx}."):
+                    del block_hessians[key]
+            # Re-init only this block's Hessians
+            block_hessians = {}
+            dim = block.attn.c_q.weight.shape[1]
+            hidden_dim = block.mlp.fc.weight.shape[0]
+            for suffix, size in [
+                (f"blocks.{block_idx}.attn.c_q.weight", dim),
+                (f"blocks.{block_idx}.attn.c_k.weight", dim),
+                (f"blocks.{block_idx}.attn.c_v.weight", dim),
+                (f"blocks.{block_idx}.attn.proj.weight", dim),
+                (f"blocks.{block_idx}.mlp.fc.weight", dim),
+                (f"blocks.{block_idx}.mlp.proj.weight", hidden_dim),
+            ]:
+                block_hessians[suffix] = torch.zeros(size, size, dtype=torch.float32, device=device)
+
+        # Run calibration through full model (earlier blocks already have dequantized weights)
+        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            for seq in token_seqs:
+                x = seq[:, :-1].to(device=device, dtype=torch.int64)
+                y = seq[:, 1:].to(device=device, dtype=torch.int64)
+                model(x, y)
+                if not use_hooks:
+                    _gptq_accum_hessians(block_hessians, model, block_idx=block_idx)
+
+        # Clean up
+        if use_hooks:
+            for h in hooks:
+                h.remove()
+        else:
+            block.attn._save_gptq = False
+            block.mlp._save_gptq = False
+            for attr in ("_gptq_qkv_in", "_gptq_o_in"):
+                if hasattr(block.attn, attr):
+                    delattr(block.attn, attr)
+            for attr in ("_gptq_up_in", "_gptq_down_in"):
+                if hasattr(block.mlp, attr):
+                    delattr(block.mlp, attr)
+
+        # Invalidate Rotary cache
+        block.attn.rotary._cos_cached = None
+        block.attn.rotary._sin_cached = None
+        block.attn.rotary._seq_len_cached = 0
+
+        _gptq_finalize_hessians(block_hessians, len(token_seqs), percdamp=percdamp)
+
+        # Quantize this block's weights and replace with dequantized versions
+        with torch.no_grad():
+            for wname, H in block_hessians.items():
+                # Navigate to the parameter
+                parts = wname.replace(".weight", "").split(".")
+                # parts = ["blocks", idx, "attn"/"mlp", layer_name]
+                param_module = model
+                for p in parts:
+                    param_module = getattr(param_module, p) if not p.isdigit() else param_module[int(p)]
+                W = param_module.weight.data.detach().cpu().float()
+                Q, s = gptq_quantize_weight(W, H.cpu(), clip_range=clip_range,
+                                            clip_sigmas=clip_sigmas, percdamp=percdamp)
+                # Dequantize and replace: model sees "quantized" weights for subsequent blocks
+                W_deq = Q.float() * s.float().unsqueeze(1)
+                param_module.weight.data = W_deq.to(device=device, dtype=param_module.weight.dtype)
+                all_hessians[wname] = H
+
+    model.train(was_training)
+    return all_hessians
 
 
 def quantize_state_dict_int8(state_dict: dict[str, Tensor]):
@@ -915,6 +1086,7 @@ def quantize_state_dict_int6_sdclip(
     state_dict: dict[str, Tensor], sdclip_k: float, embed_clip_k: float,
     hessians: dict[str, Tensor] | None = None,
     gptq_clip_range: int = 63, gptq_clip_sigmas: float = 12.85,
+    gptq_embed: bool = False, gptq_percdamp: float = 0.01,
 ):
     """Int6 SDClip quantization. When hessians provided, uses GPTQ for 2D weight matrices."""
     quantized: dict[str, Tensor] = {}
@@ -950,7 +1122,13 @@ def quantize_state_dict_int6_sdclip(
 
         stats["num_float_tensors"] += 1
         is_embed = any(pat in name for pat in EMBED_TENSOR_NAME_PATTERNS)
-        if is_embed:
+        if is_embed and gptq_embed and hessians is not None and name in hessians and t.ndim == 2:
+            # GPTQ on embeddings: Hessian-based error compensation (better than simple SDClip)
+            q, s = gptq_quantize_weight(t, hessians[name].cpu(), clip_range=gptq_clip_range,
+                                        clip_sigmas=gptq_clip_sigmas, percdamp=gptq_percdamp)
+            quant_bits[name] = 6
+            gptq_count += 1
+        elif is_embed:
             q, s = quantize_float_tensor_int8_sdclip(t, embed_clip_k)
             quant_bits[name] = 8
         elif hessians is not None and name in hessians and t.ndim == 2:
@@ -1898,36 +2076,20 @@ def main() -> None:
     gptq_hessians = None
     if args.use_gptq and use_int6:
         t_gptq = time.perf_counter()
-        log0(f"gptq:calib_source={args.gptq_calib_source} clip_range={args.gptq_clip_range} sdclip_k={args.sdclip_k}")
+        log0(f"gptq:calib_source={args.gptq_calib_source} clip_range={args.gptq_clip_range} sdclip_k={args.sdclip_k}"
+             f" sequential={args.gptq_sequential} hooks={args.gptq_use_hooks} embed={args.gptq_embed} percdamp={args.gptq_percdamp}")
+
+        # Step 1: Get calibration tokens
         if args.gptq_calib_source == "train":
-            # Training data calibration (Kevin Clark rank 5 approach, ~5s)
-            log0(f"gptq:collecting Hessians from {args.gptq_ar_samples} training batches...")
+            log0(f"gptq:collecting calibration from {args.gptq_ar_samples} training batches...")
             calib_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
-            hessians = _gptq_init_hessians(base_model, device)
-            for block in base_model.blocks:
-                block.attn._save_gptq = True
-                block.mlp._save_gptq = True
-            base_model.eval()
-            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            calib_seqs = []
+            with torch.no_grad():
                 for _ in range(args.gptq_ar_samples):
                     x, y = calib_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
-                    base_model(x, y)
-                    _gptq_accum_hessians(hessians, base_model)
-            for block in base_model.blocks:
-                block.attn._save_gptq = False
-                block.mlp._save_gptq = False
-                for attr in ("_gptq_qkv_in", "_gptq_o_in"):
-                    if hasattr(block.attn, attr):
-                        delattr(block.attn, attr)
-                for attr in ("_gptq_up_in", "_gptq_down_in"):
-                    if hasattr(block.mlp, attr):
-                        delattr(block.mlp, attr)
-            _gptq_finalize_hessians(hessians, args.gptq_ar_samples)
-            base_model.train()
-            gptq_hessians = hessians
+                    calib_seqs.append(torch.cat([x, y[:, -1:]], dim=1).detach().clone())
             del calib_loader
         else:
-            # AR self-generation calibration (rank 9/10 approach, ~120s)
             log0(f"gptq:starting AR self-generation ({args.gptq_ar_samples} seqs × {args.gptq_ar_seqlen} tokens)")
             calib_seqs = generate_autoregressive_calib(
                 base_model, device,
@@ -1939,9 +2101,40 @@ def main() -> None:
                 seed=args.seed,
             )
             log0(f"gptq:AR generated {len(calib_seqs)} sequences in {time.perf_counter() - t_gptq:.1f}s")
-            log0(f"gptq:collecting Hessians from {len(calib_seqs)} calibration sequences...")
-            gptq_hessians = gptq_collect_hessians_from_tokens(base_model, calib_seqs, device)
-            del calib_seqs
+
+        # Step 2: Collect Hessians (or do sequential quantization)
+        if args.gptq_sequential:
+            log0(f"gptq:sequential block-by-block quantization ({len(base_model.blocks)} blocks)...")
+            gptq_hessians = gptq_sequential_quantize(
+                base_model, calib_seqs, device,
+                clip_range=args.gptq_clip_range, clip_sigmas=args.sdclip_k,
+                percdamp=args.gptq_percdamp, use_hooks=args.gptq_use_hooks,
+            )
+        elif args.gptq_use_hooks:
+            log0(f"gptq:hook-based Hessian collection from {len(calib_seqs)} sequences...")
+            gptq_hessians = gptq_collect_hessians_with_hooks(
+                base_model, calib_seqs, device, percdamp=args.gptq_percdamp,
+            )
+        else:
+            log0(f"gptq:manual flag-based Hessian collection from {len(calib_seqs)} sequences...")
+            gptq_hessians = gptq_collect_hessians_from_tokens(
+                base_model, calib_seqs, device, percdamp=args.gptq_percdamp,
+            )
+
+        # Step 3: Embedding Hessian (token frequency-based)
+        if args.gptq_embed:
+            log0("gptq:computing embedding Hessian from calibration token frequencies...")
+            vocab_size = base_model.tok_emb.weight.shape[0]
+            embed_H = torch.zeros(vocab_size, vocab_size, dtype=torch.float32)
+            for seq in calib_seqs:
+                tokens = seq.flatten().cpu()
+                for tok in tokens:
+                    embed_H[tok, tok] += 1.0
+            damp = args.gptq_percdamp * embed_H.diag().mean().clamp_min(1e-6)
+            embed_H += damp * torch.eye(vocab_size)
+            gptq_hessians["tok_emb.weight"] = embed_H
+
+        del calib_seqs
         gptq_elapsed = time.perf_counter() - t_gptq
         log0(f"gptq:done in {gptq_elapsed:.1f}s, {len(gptq_hessians)} Hessians collected")
         torch.cuda.empty_cache()
@@ -1951,6 +2144,8 @@ def main() -> None:
             base_model.state_dict(), args.sdclip_k, args.embed_clip_k,
             hessians=gptq_hessians,
             gptq_clip_range=args.gptq_clip_range, gptq_clip_sigmas=args.sdclip_k,
+            gptq_embed=args.gptq_embed if args.use_gptq else False,
+            gptq_percdamp=args.gptq_percdamp if args.use_gptq else 0.01,
         )
         dequant_fn = dequantize_state_dict_int6
     else:
