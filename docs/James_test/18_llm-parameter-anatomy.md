@@ -293,6 +293,448 @@ With 5.5 MB headroom from GPTQ, the following upgrades become budget-legal:
 
 The biggest bang-for-buck is **dim=512**: it recovers 0.020 BPB from a single config change and still leaves ~2.7 MB headroom for further upgrades.
 
+## How Our Brain Learns — The Training Pipeline as Neural Development
+
+This traces what happens when our Run 11 brain (9L, dim=448, SP8192) processes the sentence **"The dog chased the cat and it was tired"** during training — one complete forward pass + backward pass, explained as a developing brain learning language.
+
+### Phase 1: Hearing the Words (Embedding)
+
+```
+ SENSORY INPUT — Wernicke's Area (Dictionary)
+ ══════════════════════════════════════════════
+
+ "The dog chased the cat and it was tired"
+   │    │     │     │   │   │   │  │    │
+   ▼    ▼     ▼     ▼   ▼   ▼   ▼  ▼    ▼
+ ┌────────────────────────────────────────────┐
+ │         EMBEDDING TABLE (22.4%)            │
+ │         3.7M synapses                      │
+ │                                            │
+ │  "The" → [0.12, -0.34, 0.81, ... ×448]   │
+ │  "dog" → [0.77,  0.23, 0.05, ... ×448]   │
+ │  "it"  → [0.41, -0.15, 0.62, ... ×448]   │
+ │                                            │
+ │  Each word becomes a 448-dimensional       │
+ │  "sensation" — a raw, unprocessed feeling  │
+ │  of what the word means in isolation.      │
+ └────────────────────────────────────────────┘
+          │
+          ▼
+     9 tokens, each a 448-dim vector
+     (the brain has "heard" the words but
+      doesn't understand the sentence yet)
+```
+
+**Brain analogy:** This is like a newborn hearing speech — the auditory cortex activates for each sound, mapping it to a basic representation. "Dog" triggers a vague cluster of associated neurons, but there's no understanding of *which* dog, *what it did*, or *why it matters*. That comes next.
+
+### Phase 2: Building Understanding (Encoder — Layers 0-3)
+
+The encoder is like the **ventral stream** in neuroscience — the "what pathway" that builds increasingly abstract representations. Each layer alternates between two operations: attention (connecting words) and MLP (enriching with knowledge).
+
+```
+ ENCODER — Ventral Stream ("What Pathway")
+ ══════════════════════════════════════════
+
+ ┌─ LAYER 0 ──────────────────────────────────────────────────────┐
+ │                                                                │
+ │  ATTENTION (focus): "What relates to what?"                    │
+ │  ┌──────────────────────────────────────────────────────────┐  │
+ │  │  "The" ←──── looks at ────► "dog"    (article + noun)   │  │
+ │  │  "the" ←──── looks at ────► "cat"    (article + noun)   │  │
+ │  │  "chased" ← looks at ──► "dog","cat" (verb + arguments) │  │
+ │  │                                                          │  │
+ │  │  Each of 8 attention heads focuses on a different        │  │
+ │  │  relationship type: syntax, proximity, semantics...      │  │
+ │  │                                                          │  │
+ │  │  Headwise gate: sigmoid decides how much each head's     │  │
+ │  │  finding matters. "Head 3 found something useful → let   │  │
+ │  │  it through. Head 7 found noise → suppress it."          │  │
+ │  └──────────────────────────────────────────────────────────┘  │
+ │       │                                                        │
+ │       ▼                                                        │
+ │  MLP (knowledge): "What do I know about this?"                 │
+ │  ┌──────────────────────────────────────────────────────────┐  │
+ │  │  448 → 896 → 448  (expand, think, compress)              │  │
+ │  │                                                          │  │
+ │  │  "dog" + context of "chased" →                           │  │
+ │  │     enriched "dog" now contains: [agent, animate,        │  │
+ │  │     predator-role, past-tense-action, ...]               │  │
+ │  │                                                          │  │
+ │  │  LeakyReLU²: the activation function. Neurons that fire  │  │
+ │  │  weakly still contribute (leaky), and strong signals     │  │
+ │  │  are amplified quadratically (²). Like neural gain       │  │
+ │  │  control — the brain turns up volume on important        │  │
+ │  │  signals and keeps a whisper of everything else.         │  │
+ │  └──────────────────────────────────────────────────────────┘  │
+ │       │                                                        │
+ │       ├──── SAVE skip tensor (for decoder layer 8) ◄──┐       │
+ │       │     Like forming an episodic memory snapshot    │       │
+ │       ▼                                                 │       │
+ └─────────────────────────────────────────────────────────┘       │
+                                                                   │
+ ┌─ LAYER 1 ──────────────────────────────────────────────────┐   │
+ │  Attention: deeper relationships emerge                     │   │
+ │    "it" starts to weakly attend to both "dog" and "cat"    │   │
+ │    (hasn't resolved the ambiguity yet)                      │   │
+ │  MLP: more abstract enrichment                              │   │
+ │    "chased" → [pursuit, predator-prey, motion-verb, ...]   │   │
+ │       │                                                     │   │
+ │       ├──── SAVE skip tensor (for decoder layer 7)          │   │
+ │       ▼                                                     │   │
+ └─────────────────────────────────────────────────────────────┘   │
+                                                                   │
+ ┌─ LAYER 2 ──────────────────────────────────────────────────┐   │
+ │  Attention: multi-hop reasoning begins                      │   │
+ │    "it" attends to "dog" AND "chased" together —            │   │
+ │    starting to figure out the agent of the action           │   │
+ │  MLP: factual associations activate                         │   │
+ │    "tired" → [state-change, consequence, animate-only, ...] │   │
+ │       │                                                     │   │
+ │       ├──── SAVE skip tensor (for decoder layer 6)          │   │
+ │       ▼                                                     │   │
+ └─────────────────────────────────────────────────────────────┘   │
+                                                                   │
+ ┌─ LAYER 3 ──────────────────────────────────────────────────┐   │
+ │  Attention: abstract patterns crystallize                   │   │
+ │    "it" now strongly attends to "dog" (the chaser gets     │   │
+ │    tired, not the chasee — learned from training data)      │   │
+ │  MLP: highest-level encoder knowledge                       │   │
+ │    sentence structure fully parsed                          │   │
+ │       │                                                     │   │
+ │       ├──── SAVE skip tensor (for decoder layer 5)          │   │
+ │       ▼                                                     │   │
+ └─────────────────────────────────────────────────────────────┘   │
+                                                                   │
+         At this point, the brain has a deep understanding         │
+         of the sentence. But understanding isn't enough —         │
+         it needs to produce an output (predict the next word).    │
+         That's the decoder's job.                                 │
+                                                                   │
+                                        skip connections ──────────┘
+```
+
+**Brain analogy:** This is like reading a sentence carefully for the first time. Your brain processes it bottom-up — first recognizing individual words (layer 0), then parsing syntax (layer 1), then resolving references (layer 2), then grasping full meaning (layer 3). Each layer's output is a richer representation. The skip connections are like **episodic memory** — snapshots of your understanding at each stage, preserved for later use.
+
+### Phase 3: Generating Output (Decoder — Layers 4-8)
+
+The decoder is like the **dorsal stream** — the "how pathway" that transforms understanding into action (predicting the next token). It receives skip connections from the encoder, like recalling earlier stages of comprehension.
+
+```
+ DECODER — Dorsal Stream ("How Pathway")
+ ═════════════════════════════════════════
+
+ ┌─ LAYER 4 ──────────────────────────────────────────────────┐
+ │  (no skip connection — this is the U-Net "bottleneck")     │
+ │  Deepest abstract processing — the "aha moment"            │
+ │  Attention + MLP refine the representation further         │
+ │       │                                                     │
+ │       ▼                                                     │
+ └─────────────────────────────────────────────────────────────┘
+
+ ┌─ LAYER 5 ──────────────────────────────────────────────────┐
+ │  + SKIP from Layer 3 (high-level encoder snapshot)         │
+ │  ┌────────────────────────────────────────────────────┐    │
+ │  │  current representation ──┐                        │    │
+ │  │                           ├─► BLEND (learned wt)   │    │
+ │  │  layer 3 skip tensor ────┘                         │    │
+ │  │                                                    │    │
+ │  │  Like recalling your first careful reading while   │    │
+ │  │  also having the deeper layer-4 "aha" insight.     │    │
+ │  │  The skip connection prevents forgetting the        │    │
+ │  │  original parse as reasoning gets more abstract.   │    │
+ │  └────────────────────────────────────────────────────┘    │
+ │  Attention + MLP continue refining                         │
+ │       │                                                     │
+ │       ▼                                                     │
+ └─────────────────────────────────────────────────────────────┘
+
+ ┌─ LAYER 6 ── + SKIP from Layer 2 ──────────────────────────┐
+ │  Recalls mid-level parsing (multi-hop reasoning stage)     │
+ │  Starts converting abstract understanding → concrete output│
+ │       ▼                                                     │
+ └─────────────────────────────────────────────────────────────┘
+
+ ┌─ LAYER 7 ── + SKIP from Layer 1 ──────────────────────────┐
+ │  Recalls syntactic structure from early processing         │
+ │  Output representations becoming more "word-like"          │
+ │       ▼                                                     │
+ └─────────────────────────────────────────────────────────────┘
+
+ ┌─ LAYER 8 ── + SKIP from Layer 0 ──────────────────────────┐
+ │  Recalls raw word-level features from first layer          │
+ │  Final refinement: abstract meaning → concrete word choice │
+ │       │                                                     │
+ │       ▼                                                     │
+ │  Output: 9 refined 448-dim vectors, one per token          │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+**Brain analogy:** The decoder is like **formulating a response** after comprehending a sentence. You understood it (encoder), and now you're producing language (decoder). The skip connections are crucial — they prevent the "tip of the tongue" phenomenon where deep understanding can't connect back to specific words. Layer 8 receiving Layer 0's skip is like your speech production center accessing your raw phonological memory to pick the right word.
+
+### Phase 4: The Prediction (LM Head)
+
+```
+ PREDICTION — Broca's Area (Speech Production)
+ ═══════════════════════════════════════════════
+
+ Layer 8 output for position 9 ("tired"):
+ [0.83, -0.21, 0.54, ... ×448]
+          │
+          ▼
+ ┌────────────────────────────────────────────┐
+ │  LM HEAD (reuses Embedding table)          │
+ │  448-dim vector → 8,192 logits             │
+ │                                            │
+ │  "."     → logit 4.2   (highest!)         │
+ │  ","     → logit 3.1                       │
+ │  "and"   → logit 1.8                       │
+ │  "dog"   → logit 0.3                       │
+ │  "Paris" → logit -2.1  (irrelevant)        │
+ │                                            │
+ │  The brain predicts: next word is "."      │
+ │  (The sentence is complete.)               │
+ └────────────────────────────────────────────┘
+          │
+          ▼
+     softmax → probability distribution
+     cross-entropy loss: how wrong were we?
+```
+
+### Phase 5: Learning from Mistakes (Backpropagation)
+
+This is where the brain actually **grows**. Everything above was one forward pass — the brain reading and predicting. Now the error signal flows backward, strengthening or weakening every synapse.
+
+```
+ BACKPROPAGATION — Synaptic Plasticity
+ ══════════════════════════════════════
+
+ The true next word was "." and we predicted "." → small loss
+ But at position 7, we predicted "is" and truth was "was" → larger loss
+
+ Error signal flows BACKWARD through every layer:
+
+ Loss = 2.14 (how wrong the brain was overall)
+          │
+          ▼
+ Layer 8 ◄── "Your final word choice was slightly off.
+              Adjust your 605K attention + 803K MLP synapses."
+          │
+          ▼
+ Layer 7 ◄── "Your syntax reconstruction was good but
+              the tense handling needs work."
+          │
+          ▼
+    ... (error flows through every layer) ...
+          │
+          ▼
+ Layer 0 ◄── "Your initial word groupings were fine.
+              Tiny adjustments only."
+          │
+          ▼
+ Embedding ◄── "Your definition of 'was' needs to
+                encode tense information more strongly."
+
+
+ LEARNING RULE (simplified):
+
+   For each synapse (weight) in the brain:
+   ┌─────────────────────────────────────────────────┐
+   │                                                 │
+   │  gradient = "how much did THIS synapse          │
+   │              contribute to the mistake?"         │
+   │                                                 │
+   │  new_weight = old_weight - learning_rate × grad │
+   │                                                 │
+   │  Muon optimizer: also considers the geometry    │
+   │  of the loss landscape (not just steepest       │
+   │  descent, but the most efficient direction)     │
+   │                                                 │
+   └─────────────────────────────────────────────────┘
+
+ This happens for ALL 16.4M synapses simultaneously.
+ One forward + backward pass ≈ 1 training step.
+ Run 11 does ~11,000 steps in 10 minutes on 8×H100.
+```
+
+**Brain analogy:** This is **Hebbian learning** — "neurons that fire together wire together." But backprop is more precise: it knows exactly *which* synapses caused *which* errors and adjusts them proportionally. Real brains don't have backprop (this is an open neuroscience debate), but the effect is similar — repeated exposure to language patterns gradually strengthens the right connections.
+
+### Phase 6: The Full Training Loop
+
+```
+ 11,000 TRAINING STEPS — A Lifetime of Language Exposure
+ ════════════════════════════════════════════════════════
+
+ Step 1:     Brain is random noise. "The" → predicts "xkf7"
+             Loss: 9.2 (catastrophically wrong)
+             Every synapse adjusts dramatically.
+
+ Step 100:   Brain learned common words. "The" → predicts "the"
+             Loss: 5.1 (learning basic patterns)
+             Grammar starting to emerge in attention layers.
+
+ Step 1000:  Brain understands syntax. "The dog" → predicts "is"
+             Loss: 3.4 (knows word order, basic facts)
+             MLP layers storing "dog = animal" type knowledge.
+
+ Step 3000:  Brain handles context. "The dog chased the cat and it"
+             → predicts "was" (knows "it" = dog, the chaser)
+             Loss: 2.3 (real comprehension emerging)
+
+ Step 8000:  Brain near peak. Subtle distinctions:
+             "The dog chased the cat and it was" → "tired" (not "happy")
+             Loss: 2.1 (approaching the limits of 16.4M synapses)
+
+ Step 11000: Training ends (10-min wall clock).
+             Loss: 2.08 → val_bpb: 1.2077
+             The brain has learned as much as it can in this lifetime.
+
+ ┌──────────────────────────────────────────────────────────┐
+ │  LEARNING CURVE (val_bpb over training)                  │
+ │                                                          │
+ │  4.0 ┤■                                                  │
+ │      │ ■                                                 │
+ │  3.0 ┤   ■                                               │
+ │      │     ■■                                            │
+ │  2.0 ┤        ■■■■■                                      │
+ │      │              ■■■■■■■■■■■■■■■■■■                   │
+ │  1.2 ┤─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─■■■■■ ← plateau │
+ │      │                                                   │
+ │  1.0 ┤  (leaderboard brains reach here)                  │
+ │      └──┬────┬────┬────┬────┬────┬────┬────┬─            │
+ │         0   1k   2k   4k   6k   8k  10k  11k            │
+ │                      steps                               │
+ └──────────────────────────────────────────────────────────┘
+```
+
+**Brain analogy:** This is a compressed version of human language acquisition. A child hears ~30,000 words/day and takes ~4 years to become fluent (~44 million words). Our model processes ~8 billion tokens in 11,000 steps — equivalent to ~700 years of human language exposure crammed into 10 minutes. The plateau at step ~8000 is like an adult's language ability — still improving, but the easy gains are exhausted. The remaining gap to the leaderboard (1.2077 vs 1.0856) is the difference between a competent speaker and a poet.
+
+## Two Brains: Ours vs. the Leaderboard
+
+A neuroscientist looking at our model and Kevin Clark's (rank 5) would see two very different brains.
+
+### Our Brain — Run 11 (dim=448, 2× MLP, 9L, SP8192)
+
+```
+                    ┌─────────────────────────────┐
+                   ╱  CEREBRAL CORTEX (MLP 44.2%)  ╲
+                  ╱   Long-term knowledge store      ╲
+                 ╱    "Paris is the capital of..."     ╲
+                ╱      896 neurons wide per layer        ╲
+               ╱        7.2M synapses total               ╲
+              │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
+              │                                           │
+              │    PREFRONTAL CORTEX (Attention 33.3%)    │
+              │    Working memory / focus / reasoning     │
+              │    "Which noun does 'it' refer to?"       │
+              │    5.5M synapses, 4 KV focus channels     │
+              │                                           │
+              │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
+              │                                           │
+              │     WERNICKE'S AREA (Embedding 22.4%)     │
+              │     Dictionary: 8,192 words known         │
+              │     3.7M synapses (word ↔ meaning)        │
+              │                                           │
+              └───────────────────────────────────────────┘
+
+              Total brain mass: ~16.4M synapses
+              Cortex thickness: 896 neurons (2× dim)
+              Processing depth: 9 layers of thought
+              Compression: int8+zlib → 15.35 MB
+```
+
+**Diagnosis:** A small, efficient brain. The dictionary (Wernicke's) is oversized at 22% — this brain knows 8,192 words but has a thin cortex to reason about them. Like a person with a huge vocabulary but limited life experience. The cortex is only 896 neurons wide — it can store facts but runs out of room quickly.
+
+### Leaderboard Brain — Kevin Clark Style (dim=512, 4× MLP, 11L+recurrence, SP4096)
+
+```
+          ┌─────────────────────────────────────────────────────┐
+         ╱          CEREBRAL CORTEX (MLP 68.2%)                  ╲
+        ╱           Long-term knowledge store                      ╲
+       ╱            "Paris is the capital of..."                     ╲
+      ╱             "The Eiffel Tower was built in 1889"              ╲
+     ╱              "French GDP is $2.78 trillion"                     ╲
+    ╱                2,048 neurons wide per layer                       ╲
+   ╱                  23.1M synapses total                               ╲
+  │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
+  │                                                                      │
+  │              PREFRONTAL CORTEX (Attention 25.6%)                     │
+  │              Working memory / focus / reasoning                      │
+  │              8.7M synapses, 4 KV focus channels                     │
+  │                                                                      │
+  │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│
+  │              WERNICKE'S AREA (Embedding 6.2%)                        │
+  │              Dictionary: 4,096 words known                           │
+  │              2.1M synapses                                           │
+  └──────────────────────────────────────────────────────────────────────┘
+
+              ┌──────────────────────────┐
+              │   DEPTH RECURRENCE       │
+              │   Layers 4-5 loop twice  │
+              │   = "sleeping on it"     │
+              │   13 virtual layers of   │
+              │   thought from 11 unique │
+              │   Same neurons, re-used  │
+              └──────────────────────────┘
+
+              Total brain mass: ~33.8M synapses
+              Cortex thickness: 2,048 neurons (4× dim)
+              Processing depth: 13 virtual layers (11 unique)
+              Compression: GPTQ int6+brotli → ~16 MB
+```
+
+**Diagnosis:** A large brain with a dominant cortex — like a primate vs. a reptile. The cortex is 2.3× thicker (2,048 vs 896 neurons), storing far more knowledge per layer. The dictionary is smaller (4,096 words) but that's a deliberate tradeoff: fewer words, but deeper understanding of each one. Depth recurrence is like **sleeping on a problem** — the same neural circuits in layers 4-5 fire twice, refining mid-level representations without growing the brain.
+
+### Side-by-Side Comparison
+
+```
+         OUR BRAIN (16.4M)              LEADERBOARD BRAIN (33.8M)
+
+      ┌───────────────────┐        ┌─────────────────────────────┐
+      │░░░░░░░░░░░░░░░░░░░│        │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+      │░░ CORTEX  44.2% ░░│        │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+      │░░ 896 wide    ░░░░│        │▓▓▓ CORTEX  68.2%  ▓▓▓▓▓▓▓▓▓│
+      │░░ 7.2M params ░░░░│        │▓▓▓ 2,048 wide     ▓▓▓▓▓▓▓▓▓│
+      │░░░░░░░░░░░░░░░░░░░│        │▓▓▓ 23.1M params   ▓▓▓▓▓▓▓▓▓│
+      ├───────────────────┤        │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+      │                   │        │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+      │ ATTENTION  33.3%  │        ├─────────────────────────────┤
+      │ 5.5M params       │        │                             │
+      │                   │        │  ATTENTION  25.6%           │
+      ├───────────────────┤        │  8.7M params                │
+      │▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒│        │                             │
+      │▒ DICTIONARY 22.4%▒│        ├─────────────────────────────┤
+      │▒ 8,192 words   ▒▒▒│        │ DICTIONARY  6.2%            │
+      │▒ 3.7M params  ▒▒▒▒│        │ 4,096 words, 2.1M params   │
+      └───────────────────┘        └─────────────────────────────┘
+
+      Compressed: 15.35 MB          Compressed: ~16 MB (GPTQ)
+      val_bpb: 1.2077               val_bpb: 1.0856
+```
+
+### The Neuroscience Interpretation
+
+**Our model is like a small animal brain** — large language center relative to cortex. It knows many words (8,192) but has thin cortical layers to process them. Each "thought" passes through 896-neuron-wide layers, limiting how much knowledge can be stored and retrieved per inference.
+
+**The leaderboard model is like a primate brain** — massive cortex dominates. It knows fewer words (4,096) but understands each one far more deeply. The 2,048-neuron-wide cortex can store 3.2× more factual associations per layer. And depth recurrence gives it a form of **iterative refinement** — like the brain replaying a thought during sleep to consolidate understanding.
+
+The key insight: **in real brains, cortex size predicts intelligence far better than vocabulary size.** Crows (small brain, huge cortex ratio) outperform parrots (larger brain, smaller cortex ratio) on reasoning tasks. Similarly, the leaderboard proves that **a thicker cortex (4× MLP) with fewer words (SP4096) beats a thin cortex (2× MLP) with more words (SP8192)** — at least when you can compress the larger brain to fit.
+
+The compression (GPTQ) is like **myelin sheathing** — it doesn't change the number of neurons, but it makes the signal transmission more efficient, allowing a larger brain to fit in the same skull (16 MB). Our brain uses crude compression (int8) that preserves signal quality but limits brain size. Their brain uses precise compression (GPTQ + quantization-aware training) that allows a 2× larger brain with only 0.012 BPB signal loss.
+
+### Numbers at a Glance
+
+| Metric | Our Brain | Leaderboard Brain | Analogy |
+|--------|-----------|-------------------|---------|
+| Cortex width | 896 | 2,048 | Mouse vs. macaque neocortex thickness |
+| Cortex % | 44.2% | 68.2% | Reptile vs. primate cortex ratio |
+| Dictionary | 8,192 words | 4,096 words | Polyglot vs. deep native speaker |
+| Thought depth | 9 layers | 13 virtual (11 unique) | Quick glance vs. deliberate reflection |
+| Depth recurrence | None | Layers 4-5 loop | — vs. sleep consolidation |
+| Compression | int8 (crude) | GPTQ+QAT (precise) | Raw nerve vs. myelinated axon |
+| Brain mass | 16.4M | 33.8M | 2× larger |
+| Skull size | 15.35 MB | ~16 MB | Same skull |
+| BPB | 1.2077 | 1.0856 | — |
+
 ## Cross-Reference
 
 - `16_pg-leaderboard-techniques.md` — technique deep dives (SP8192, depth recurrence, etc.)

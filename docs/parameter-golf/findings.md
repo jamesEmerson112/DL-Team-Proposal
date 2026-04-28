@@ -36,10 +36,15 @@
 | H† | SP8192 combo slim (no TTT) | 16.36M | 3.2112 | 1.2432 | 2,541 | 236ms | int8 | 15.04 MB | Yes |
 | E2† | Elementwise dim=416 GQA | ~14.6M | — | 1.2447 | 2,772 | — | int8 | 14.68 MB | Yes |
 | E3† | MQA dim=448 headwise | ~14.3M | — | 1.2509 | 2,979 | — | int8 | 14.32 MB | Yes |
+| R3§ | **ResFormer α=0.5 10L MHA** | 27.8M | 3.2383 | **1.2536** | 2,535 | — | GPTQ | 15.55 MB | Yes |
+| R1§ | ResFormer α=0.1 10L MHA | 27.8M | 3.2405 | 1.2545 | 2,480 | — | GPTQ | 15.55 MB | Yes |
+| R4§ | ResFormer α=0.7 10L MHA | 27.8M | 3.2420 | 1.2551 | 2,503 | — | GPTQ | 15.56 MB | Yes |
 | A2‡ | Elem dim=512 9L MHA | 25.4M | 3.2488 | 1.2577 | 2,712 | — | GPTQ | 14.24 MB | Yes |
+| Q0§ | Elem 10L MHA (GPTQ baseline) | 27.8M | 3.2506 | 1.2579 | 2,480 | — | GPTQ | 15.55 MB | Yes |
+| R0§ | ResFormer α=0.0 10L MHA | 27.8M | 3.2506 | 1.2584 | 2,480 | — | GPTQ | 15.55 MB | Yes |
 | L3‡ | Elem dim=512 11L GQA | 27.3M | 3.2525 | 1.2591 | 2,484 | — | GPTQ | 15.27 MB | Yes |
-| 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | int8 | 17.87 MB | **No** |
 | E4† | MQA + Elementwise dim=416 | ~14.0M | — | 1.2601 | 2,982 | — | int8 | 14.02 MB | Yes |
+| 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | int8 | 17.87 MB | **No** |
 | 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | int8 | 15.77 MB | Yes |
 | 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | int8 | 15.77 MB | Yes |
 | 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | int8 | 15.77 MB | Yes |
@@ -53,7 +58,7 @@
 | D1‡ | Elem dim=448 9L GQA | 18.1M | 3.3216 | 1.2859 | 2,618 | — | GPTQ | 10.20 MB | Yes |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). GPTQ val_bpb = TTT BPB (post-quant + TTT recovery).**
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). GPTQ val_bpb = TTT BPB (post-quant + TTT recovery).**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 
@@ -233,6 +238,68 @@ D2 is shared baseline for all 3 sweeps. PG baseline: 1.2244 BPB.
 3. **Bigger models have smaller GPTQ gaps.** D4 (1024) gap is only +0.0258 vs D1 (448) at +0.0537. More parameters = more redundancy for GPTQ to exploit.
 4. **Best under-budget candidates** (if GPTQ gap is fixed to ~0.012): **L3** (11L, 1.2042 pre-Q, 15.27 MB) and **A2** (MHA, 1.2045 pre-Q, 14.24 MB). Both have ~1.204 pre-Q BPB with budget headroom.
 5. **MHA beats GQA by -0.0107 TTT BPB** at +1.3 MB cost (A2 vs D2). Full KV heads improve quality when budget allows.
+
+### Session 11 — GPTQ Tuning + ResFormer (2×H100, GPTQ, 2026-04-28)
+
+Two experiments: (A) GPTQ quality improvements to close the 0.05 gap, (B) ResFormer value residual learning. Base config: dim=512, 10L, MHA, elementwise + GPTQ int7 + train data.
+
+**Part A: GPTQ Tuning** (vs Q0 baseline: pre-Q 1.2035, TTT 1.2579, gap +0.0544):
+
+| Run | Config | Pre-Q BPB | TTT BPB | GPTQ Gap | Size | GPTQ Time |
+|-----|--------|-----------|---------|----------|------|-----------|
+| Q0 | Baseline (10L MHA) | 1.2035 | 1.2579 | +0.0544 | 15.55 MB | 4s |
+| Q1 | Sequential blocks | 1.2037 | 1.3916 | +0.1879 | 15.55 MB | 35s |
+| Q3 | GPTQ on embeddings | 1.2025 | 1.6897 | +0.4872 | 15.36 MB | 31s |
+| Q7 | All combined | 1.2039 | 1.8679 | +0.6640 | 15.36 MB | 63s |
+
+**All GPTQ tuning runs made things dramatically worse.** Sequential (+0.19), embed GPTQ (+0.49), all combined (+0.66). Pre-quant BPB is unaffected (GPTQ runs post-training), confirming the damage is entirely in the quantization step. Root causes:
+1. **Sequential block quantization** — replacing weights with dequantized versions introduces cumulative error. Even with the fix (save/restore original weights, use sequential Hessians only), the Hessians collected through dequantized blocks are worse than full-precision Hessians.
+2. **Embedding GPTQ** — frequency-weighted column correlation `H = W^T @ diag(freq) @ W` is not the right Hessian for embedding quantization. Embeddings are lookup tables, not linear projections — GPTQ's column-by-column error compensation doesn't apply correctly.
+3. **Combined** — errors compound when both are enabled.
+
+**Conclusion: abandon GPTQ tuning approaches.** The existing GPTQ (Q0 config, gap +0.054) is our best. The gap to Kevin Clark likely comes from his `register_forward_hook` implementation details or his looped-layer architecture, not from sequential quantization or embedding GPTQ.
+
+**Why leaderboard GPTQ gaps are 4-5× smaller than ours** (analysis of Kevin Clark rank 5, dexhunter rank 7 READMEs):
+
+| Who | Pre-Q BPB | Post-Q BPB | GPTQ Gap | Notes |
+|-----|-----------|------------|----------|-------|
+| Kevin Clark (rank 5) | 1.090 | 1.102 | **+0.012** | Full quantization-aware stack |
+| dexhunter (rank 7) | 1.099 | 1.109 | **+0.010** | All-int6, WD=0.09, EMA |
+| Us (R3, best GPTQ) | 1.200 | 1.254 | **+0.053** | Bare GPTQ only |
+
+Five compounding reasons the leaderboard achieves ~0.01 gap vs our ~0.05:
+
+1. **Depth recurrence = fewer unique matrices to quantize.** Kevin Clark loops layers 4-5 (sharing weights), so ~8 unique layer sets instead of 10. Fewer matrices = less total quantization error. This is the most elegant insight: you can improve quantization quality by reducing the number of surfaces GPTQ must compress.
+2. **QAT (Quantization-Aware Training).** Ranks 7-12 use soft-round QAT — the model trains expecting quantization. Our model trains full-precision then gets shocked post-hoc.
+3. **Higher weight decay (0.085-0.090).** dexhunter's key finding: "higher WD produces smaller weights that compress 5% better under brotli." Smaller weights = less dynamic range = less GPTQ error.
+4. **EMA (Exponential Moving Average, decay ~0.997).** Ranks 7-14 all use EMA. Averaging out training noise makes weights smoother and more compressible.
+5. **`register_forward_hook` Hessian collection.** Kevin Clark captures true activation statistics through the live network; our manual `_save_gptq` flags likely miss some dynamics.
+
+**Key takeaway:** The leaderboard doesn't just "use GPTQ" — they use GPTQ as the final step of a quantization-aware pipeline (WD tuning → EMA → QAT → GPTQ → brotli). We're only doing the last two steps. Closing the gap requires adopting the full pipeline, not tuning GPTQ parameters.
+
+**Part B: ResFormer Alpha Sweep** (vs R0 control: pre-Q 1.2040, TTT 1.2584):
+
+| Run | Alpha | Pre-Q BPB | TTT BPB | GPTQ Gap | Size |
+|-----|-------|-----------|---------|----------|------|
+| R0 | 0.0 | 1.2040 | 1.2584 | +0.0544 | 15.55 MB |
+| R1 | 0.1 | 1.2020 | 1.2545 | +0.0525 | 15.55 MB |
+| R3 | 0.5 | **1.2004** | **1.2536** | +0.0532 | 15.55 MB |
+| R4 | 0.7 | 1.2025 | 1.2551 | +0.0526 | 15.56 MB |
+
+Note: R2 (alpha=0.3) not run. R3 is alpha=0.5 (run ID `resformer_a05`).
+
+**ResFormer works.** Best results at alpha=0.5:
+- Pre-Q BPB: **1.2004** (vs 1.2040 control, -0.0036 improvement)
+- TTT BPB: **1.2536** (vs 1.2584 control, -0.0048 improvement)
+- GPTQ gap slightly improved: +0.0532 vs +0.0544
+- Zero extra params, zero size cost (15.55 MB unchanged)
+
+**Key findings:**
+1. **Alpha=0.5 is optimal** — equal blend of V₀ and V_current gives best pre-Q and TTT BPB
+2. **Diminishing returns past 0.5** — alpha=0.7 is worse than 0.5, suggesting too much V₀ drowns out layer-specific value information
+3. **GPTQ gap also improved** — 0.0532 vs 0.0544, suggesting V₀ residual makes weights more compressible (smoother value distribution)
+4. **Free improvement** — no extra params, no extra memory, no extra compute, no size increase
+5. **Projected 8×H100** with alpha=0.5: pre-Q ~1.168 (from 2×H100 scaling factor), TTT ~1.221 — would beat baseline (1.2244) even after GPTQ
 
 ---
 
