@@ -138,3 +138,12 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [feat] Created `docs/James_test/pg_grant_application.txt` — PG Development grant ($500) application with 3 fields: approach (1,500 chars), tried so far (255 chars), PR link
 - [ref] PR submission: https://github.com/openai/parameter-golf/pull/1799
 - [user] User is An Thien Vo, Georgia Tech grad student, CS 7643 Deep Learning. Spent $240+ personal funds on PG experiments.
+
+### 2026-04-27 (Session 9)
+- [edit] Updated `docs/James_test/18_llm-parameter-anatomy.md` — expanded from SP1024 baseline-only to include 4 new sections:
+  - **SP8192 Combo Slim (Run 11, 16.4M):** full param breakdown at dim=448 with headwise gate, comparison table vs baseline showing embedding growth (3.1%→22.4%) and dim-reduction tradeoffs
+  - **SP8192 Combo (Run 10, 20.8M):** dim=512 param breakdown, delta table showing where +4.4M params come from (MLP half, attention third, embedding sixth), elementwise variant note
+  - **Quantization Anatomy:** aggregate compression comparison (int8+zlib 15.35 MB vs GPTQ 10.50 MB), per-component sensitivity table (embedding=low tolerance, MLP=high, early blocks 30× more important than late), 4 GPTQ bugs/lessons (inference_mode poison, percentile vs k×std, int7>int6, train>AR calibration)
+  - **Budget Math:** GPTQ compression ratio (0.684×) applied to 5 configs, showing dim=512/11L/MLP3×/elementwise all fit under 16 MB with GPTQ
+- [edit] Updated cross-reference section with current `train_gpt.py` line numbers (GPT class moved 765→1370 after GPTQ additions)
+- [preserved] Original PG Baseline (SP1024, 17M) section and Forward Pass Pipeline unchanged

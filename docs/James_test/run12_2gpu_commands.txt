@@ -64,9 +64,27 @@ if not all_ok:
 # See runs/run_gptq_benchmark_2gpu.sh for details.
 bash runs/run_gptq_benchmark_2gpu.sh
 
+# === 6. Benchmark Sweep — Dim / Layers / Attention (~91 min total) ===
+#
+# Purpose: "thicken" the model to fill budget after GPTQ compression.
+# GPTQ shrinks ~30-50%, so we can afford bigger models (more dim, layers, MHA).
+# Three isolated sweeps, each varying one axis:
+#
+#   Sweep 1 (Dim):    D1=448, D2=512, D3=768, D4=1024  — fix: 9L, GQA
+#   Sweep 2 (Layers): D2=9L, L2=10L, L3=11L            — fix: dim=512, GQA
+#   Sweep 3 (Attn):   D2=GQA, A2=MHA                   — fix: dim=512, 9L
+#
+# D2 (dim=512, 9L, GQA) is shared baseline — runs once, used in all 3 comparisons.
+# All runs: elementwise gated attn + GPTQ int7 (clip=63) + train data calib + TTT.
+#
+bash runs/run_benchmark_sweep_2gpu.sh
+
 # === Expected output ===
 #
-# Summary table with Pre-Q BPB, Roundtrip BPB, TTT BPB, Gap vs Run A, Size, GPTQ time
-# for all 4 variants. Winner = lowest TTT BPB under 16 MB.
-# Reference: Run A (int8, no GPTQ) = 1.2411 BPB
-# Previous GPTQ (5-pct, int6, AR, old code) = 1.2929 BPB (TTT), gap +0.0518
+# GPTQ benchmark: table with Pre-Q BPB, Roundtrip BPB, TTT BPB, Gap vs Run A, Size, GPTQ time
+# Benchmark sweep: table with Run, Sweep, Config, Params, Steps, Pre-Q BPB, TTT BPB, GPTQ Size, GPTQ Time
+#
+# Key questions answered:
+#   - Does dim=512 or dim=768 recover more BPB than dim=448 after GPTQ?
+#   - Does 10L or 11L help at dim=512?
+#   - Does MHA beat GQA when budget allows it?

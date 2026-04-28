@@ -167,6 +167,33 @@ Ported full GPTQ from PG rank 9 (Marko Sisovic). Algorithm: Frantar et al., "GPT
 
 **Next: GPTQ benchmark sweep** — testing 4 combinations (int6/int7 × AR/train) with the updated code (no_grad + k×std clipping). See `runs/run_gptq_benchmark_2gpu.sh`.
 
+**GPTQ benchmark results** (2×H100, headwise dim=448, SP8192, v2 code: no_grad + k×std clip):
+
+| Run | Config | Pre-Q BPB | RT BPB | TTT BPB | Gap (vs Run A) | Size | GPTQ time |
+|-----|--------|-----------|--------|---------|----------------|------|-----------|
+| G1 | int7 + AR self-gen | 1.2361 | 1.3653 | 1.2930 | +0.0519 | 9.22 MB | 119s |
+| **G2** | **int7 + train data** | **1.2364** | **1.3608** | **1.2924** | **+0.0513** | **9.22 MB** | **4s** |
+| G3 | int6 + AR self-gen | 1.2364 | 1.3813 | 1.3081 | +0.0670 | 7.63 MB | 116s |
+| G4 | int6 + train data | 1.2360 | 1.3801 | 1.3030 | +0.0619 | 7.63 MB | 4s |
+
+**Decision: int7 + train data (G2 config).** Strictly dominates: same size as G1, better quality, 30× faster. int7 beats int6 by ~0.01 BPB gap at only +1.6 MB size cost.
+
+**Key findings:**
+1. **v2 code barely improved over v1** — best gap +0.0513 (G2) vs +0.0518 (v1). The no_grad and k×std fixes solved the Rotary crash and speed, but **not the quality gap**.
+2. **Train data calibration > AR self-gen** — consistently better quality (G2 vs G1, G4 vs G3) and 30× faster (4s vs 116-119s).
+3. **int7 > int6** — ~0.01 BPB less degradation at +1.6 MB size cost. At 9.22 MB, still 6.78 MB under budget.
+4. **Gap still 4× worse than Kevin Clark** — +0.051 vs +0.012. Remaining difference likely in Hessian collection method (Kevin uses `register_forward_hook` vs our manual `_save_gptq` flags) or other subtle implementation details.
+
+**Efficiency analysis (size saved vs BPB lost, relative to Run A int8+zlib):**
+
+| Config | Size saved | BPB lost | Ratio (higher = better) |
+|--------|-----------|----------|------------------------|
+| G2 (int7, best) | 38.7% | 4.1% | 9.4× |
+| G4 (int6, smallest) | 49.2% | 5.0% | 9.9× |
+| Kevin Clark target | ~35% | ~1.0% | 35× |
+
+Ratios are favorable (well above 1×), but the net tradeoff is negative for model upgrades: GPTQ frees ~5.8 MB for dim=512, but dim=512 only recovers -0.020 BPB while GPTQ costs +0.051. Need to close the gap to Kevin Clark's +0.012 before GPTQ becomes net-positive for bigger models.
+
 ---
 
 **Current SOTA:** 1.0810 BPB — SP8192 + 3-layer recurrence + parallel residuals + QK-Gain 5.25 + legal score-first TTT (bigbag, 2026-04-09).
