@@ -41,6 +41,9 @@ Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) 
 | 28 | **Gated Linear Attention (GLA)** | ICML 2024 | [arxiv](https://arxiv.org/abs/2312.06635) | Linear attention with data-dependent gates; O(n) complexity; FlashLinearAttention kernel | Not tested | Risky: PG uses 1024-token seqs where quadratic attention is already fast. O(n) benefit shows at longer contexts. Lower priority. |
 | 2 | **Scaling Data-Constrained Language Models** | NeurIPS 2023 Outstanding Paper | [arxiv](https://arxiv.org/abs/2305.16264) | Scaling laws for repeated data — up to 4 epochs of repeated data has negligible loss vs unique data | N/A (theory) | Validates that if the 10-min window limits how much FineWeb you see, repeating data 2-4x is fine. Train longer on same data without penalty. |
 | 18 | **Are Emergent Abilities a Mirage?** | NeurIPS 2023 Outstanding Paper | [arxiv](https://arxiv.org/abs/2304.15004) | Apparent emergence is an artifact of discontinuous metrics, not model behavior | N/A (theory) | Not directly actionable for BPB optimization, but reinforces that BPB (a continuous metric) is the right evaluation target — small models improve smoothly, no "emergence threshold" to worry about. |
+| 30 | **ShishuLM: Low Attention Transformer Models** | arXiv 2025 | [arxiv](https://arxiv.org/abs/2510.13860) | Asymmetric blocks: early layers need attention (token mixing), late layers need MLP (prediction refinement); MLP-only layers with shared weights | Not tested | Explores whether attention and MLP layers can have different counts. At PG scale, confirms depth recurrence intuition: the middle transition layers (4-5) are where repeated compute helps most. Weight-shared MLP-only layers could compress further. |
+| 31 | **Reducing the Transformer Architecture to a Minimum** | arXiv 2024 | [arxiv](https://arxiv.org/abs/2410.13732) | Systematically removes transformer components to find minimal viable architecture | Not tested | Useful reference for understanding which components are essential vs redundant at small scale. Could inform aggressive simplification strategies under 16 MB budget. |
+| 32 | **Attention-Only Transformers** | arXiv 2023 | [arxiv](https://arxiv.org/abs/2309.08593) | Proves MLPs can be replaced by attention heads; converts MLP-and-attention transformer into attention-only at the cost of more heads | N/A (theory) | Theoretical result showing MLP and attention are interchangeable. Not practical for PG (requires many more heads = more params), but confirms that the attention/MLP boundary is softer than it appears. |
 
 ---
 
@@ -177,6 +180,11 @@ Share weights across layers but add lightweight per-layer routing or adapters. A
 - [Exclusive Self-Attention](https://arxiv.org/abs/2603.09078)
 - [Mixture-of-Depths](https://arxiv.org/abs/2404.02258)
 - [MiniPLM](https://arxiv.org/abs/2410.17215)
+
+### Asymmetric / Minimal Architecture Papers
+- [ShishuLM: Low Attention Transformer Models](https://arxiv.org/abs/2510.13860)
+- [Reducing the Transformer Architecture to a Minimum](https://arxiv.org/abs/2410.13732)
+- [Attention-Only Transformers and Implementing MLPs with Attention Heads](https://arxiv.org/abs/2309.08593)
 
 ### Other References
 - [OpenAI Parameter Golf](https://github.com/openai/parameter-golf)
