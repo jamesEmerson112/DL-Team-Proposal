@@ -108,3 +108,16 @@ bash runs/run_combined_2gpu.sh
 #     "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
 #
 bash runs/run_v2_factorial_2gpu.sh
+
+# === 10. V2 Compression Tuning — Fit F2 under 16 MB (~104 min, 8 runs) ===
+#
+# F2 (PR + headwise gate) = best novel BPB (1.1636) but weights are
+# 16,007,049 bytes (+7 KB over budget). Tests compression knobs:
+#   C1: embed int7          C2: embed int6
+#   C3: matrix clip 10.0    C4: matrix clip 8.0
+#   C5: emb7+clip10         C6: emb7+eclip15
+#   C7: emb7+clip10+eclip15 C8: clip10+eclip15 (keep emb8)
+#
+# PASS = weights < 16,000,000 AND TTT BPB < 1.1641 (beats F1 control)
+#
+bash runs/run_v2_compress_2gpu.sh
