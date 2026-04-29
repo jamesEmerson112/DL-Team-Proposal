@@ -3,8 +3,8 @@
 Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) applicable to the Parameter Golf challenge
 (17M param GPT, 16 MB artifact, 10 min on 8xH100, 1024-token vocab, FineWeb).
 
-**Last updated:** 2026-04-28
-**Current SOTA:** ~1.028 BPB | **Baseline:** 1.2244 BPB | **Our best:** 1.2077 (Run 11, SP8192 combo slim + TTT, 8×H100) | **V2 best:** 1.1636 (F2, rank 1 fork + headwise gate, 2×H100)
+**Last updated:** 2026-04-29
+**Current SOTA:** 1.0810 BPB (bigbag, rank 1) | **Baseline:** 1.2244 BPB | **Our best:** 1.0805 (C6, 3-seed mean, 8×H100) | **Best raw:** 1.0801 (A3, headwise no compression, 8×H100, over budget)
 
 ---
 
@@ -17,14 +17,14 @@ Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) 
 | 15 | **Small Batch Size Training / Why Gradient Accumulation is Wasteful** | NeurIPS 2025 | [neurips](https://neurips.cc/virtual/2025/poster/119899) | Small batch sizes are stable with proper Adam hyperparameter scaling; avoiding gradient accumulation improves per-FLOP performance | Not tested | If currently using gradient accumulation, removing it and training with the natural per-GPU batch size could improve efficiency. Scale Adam beta2 to match. |
 | 21 | **HybridNorm** | NeurIPS 2025 | [arxiv](https://arxiv.org/abs/2503.04598) | QKV normalization inside attention + Post-Norm in FFN; combines Pre-Norm stability with Post-Norm performance | Not tested | Cheap (just extra norm ops). Could improve training stability and final loss at 17M scale. Easy to implement: add RMSNorm to Q,K,V projections. |
 | 19 | **Differential Attention (Diff Transformer)** | ICLR 2025 (Oral) | [arxiv](https://arxiv.org/abs/2410.05258) | Computes attention as the difference of two softmax maps; cancels noise, promotes sparse attention | Not tested | Lightweight (split Q/K heads, two softmax, subtract), minimal extra params. Noise-cancellation could improve BPB by helping the model attend more precisely. |
-| 20 | **Value Residual Learning (ResFormer)** | ACL 2025 | [arxiv](https://arxiv.org/abs/2410.17897) | Residual connection from first layer's V matrix to all subsequent layers; mitigates attention concentration | **Tested by us — CONTEXT-DEPENDENT.** α=0.5 best: -0.0048 BPB on simple stack (Session 11), but +0.0025 BPB WORSE on rank 1 stack (V2 F4 vs F1). Redundant when parallel residuals already provide gradient highway. | Works on simple architectures (10L MHA), fails when stacked with parallel residuals. Not recommended for rank 1-style configs. |
+| 20 | **Value Residual Learning (ResFormer)** | ACL 2025 | [arxiv](https://arxiv.org/abs/2410.17897) | Residual connection from first layer's V matrix to all subsequent layers; mitigates attention concentration | **Tested — HURTS on rank 1 stack at all scales.** 2×H100: +0.0025 (F4 vs F1). 8×H100: +0.0022 (A2=1.0828 vs A1=1.0806). α=0.5 helps on simple 10L MHA stack (-0.0048, Session 11) but redundant with parallel residuals. | Not recommended for rank 1-style configs. Confirmed across 2× and 8×H100. |
 | 22 | **Peri-LN** | ICML 2025 | [arxiv](https://arxiv.org/abs/2502.02732) | Normalizes both input AND output of each sublayer; constrains residual spikes | Not tested | Zero extra params, just rearranging norm placement. Stabler gradients = faster convergence. Easy A/B test. |
 | 1 | **Not All Tokens Are What You Need (Rho-1)** | NeurIPS 2024 Best Paper Runner-Up | [arxiv](https://arxiv.org/abs/2404.07965) | Selective Language Modeling — score tokens with a reference model, train only on high-excess-loss tokens | **Tested — FAILS at 17M scale** | Tested Option A (simple loss-threshold) at k=0.6 to k=0.95 in Session 7. Every ratio hurts BPB: k=0.6 = +0.155, k=0.8 = +0.024, k=0.95 = +0.002 vs no-SLM baseline. Paper tested at 1B+; doesn't transfer to 17M. Small models need every gradient signal. |
 | 3 | **Scaling Laws with Vocabulary** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/93395) | Optimal vocab size scales with model size; most LLMs use too-small vocabularies | Proven — SP4096/SP8192 used in ranks 1-8 | At 17M params, 1024 tokens may actually be near-optimal or even oversized. The paper's scaling law could confirm whether 1024 is right or if 512/2048 would be better. Vocab is a free knob. |
 | 4 | **Resolving Discrepancies in Compute-Optimal Scaling** | NeurIPS 2024 Spotlight | [arxiv](https://arxiv.org/abs/2406.19146) | Corrects Kaplan vs Chinchilla scaling law gap; derives optimal LR and batch size scaling laws; AdamW beta2 tuning is essential at low batch sizes | N/A (theory) | Directly useful: the paper provides formulas for optimal LR and batch size given compute budget. Also shows LR warmup tokens should equal model size N — so ~17M tokens for a 17M model. **Note: rank 1 skips LR warmup entirely** (uses compile warmup instead — see paper #16 notes). |
 | 5 | **Building on Efficient Foundations: Structured FFN Layers** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2406.16450) | Replace dense FFN with low-rank + block-diagonal matrices; 17% throughput boost; steeper scaling curves | Not tested (paper read) | Could replace the FFN with structured matrices: same model quality with 32% fewer FFN params and 1.35x training speed. Directly trades FFN params for more steps in 10 min. |
 | 6 | **SwitchHead: MoE Attention** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2312.07987) | Mixture-of-experts in attention layer; computes up to 8x fewer attention matrices; 44% compute, 27% memory | Not tested | Could dramatically speed up attention computation. At 17M params with GQA already in use, SwitchHead could stack on top for further speedup. More steps in 10 min. |
-| 7 | **MoEUT: Mixture-of-Experts Universal Transformers** | NeurIPS 2024 | [neurips](https://proceedings.neurips.cc/paper_files/paper/2024/hash/321387ba926b8e58d3591c0aeb52ffc2-Abstract-Conference.html) | Layer sharing (depth recurrence) + MoE to compensate for reduced parameter count | **Proven + Used by us** (paper read) — depth recurrence in SOTA (rank 1, 1.0810). V2 F2 = 1.1636 BPB. | **Used in our V2 factorial** — rank 1 fork uses layers 3-4-5 looped 2× (17 virtual from 11 physical). Core technique enabling 35.9M params in 16 MB. |
+| 7 | **MoEUT: Mixture-of-Experts Universal Transformers** | NeurIPS 2024 | [neurips](https://proceedings.neurips.cc/paper_files/paper/2024/hash/321387ba926b8e58d3591c0aeb52ffc2-Abstract-Conference.html) | Layer sharing (depth recurrence) + MoE to compensate for reduced parameter count | **Proven + Used by us** (paper read) — depth recurrence in SOTA (rank 1, 1.0810). Our C6 = 1.0805 BPB (8×H100). | **Used in our V2 factorial** — rank 1 fork uses layers 3-4-5 looped 2× (17 virtual from 11 physical). Core technique enabling 35.9M params in 16 MB. |
 | 9 | **OneBit / BitNet** | NeurIPS 2024 / arXiv 2023 | [neurips](https://neurips.cc/virtual/2024/poster/94602) | 1-bit or 1.58-bit weight quantization during training (QAT); BitLinear as drop-in replacement for nn.Linear | Not tested | The artifact is int8+zlib compressed. Training with QAT at 1.58-bit could yield a much smaller compressed artifact (well under 16 MB), freeing budget for more parameters/layers. |
 | 10 | **Compact Language Models via Pruning and Knowledge Distillation** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2407.14679) | Structured pruning (depth, width, attention, MLP) + KD retraining with <3% of original data | Not tested | If a larger model can be trained first (say 50M), then pruned+distilled to 17M in the remaining time, the result may beat training 17M from scratch. Two-phase approach. |
 | 11 | **MemoryFormer** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2411.12992) | Replace FFN linear layers with locality-sensitive hash lookups into memory tables; near-zero FLOPs for FFN | Not tested | Radical FFN replacement. Could make each forward pass much cheaper (FFN is ~2/3 of FLOPs), allowing more steps in 10 min. The hash tables would need to fit in 16 MB though. |
@@ -59,8 +59,8 @@ Techniques confirmed used by top PG submissions as of April 2026:
 | Value Residual Learning | #20 | 1.0979 (mentioned) | Rank 8 | Architecture |
 | Depth Recurrence (MoEUT-style) | #7 | 1.0810 (SOTA) | Rank 1 | Architecture |
 | Vocab Scaling (SP4096/SP8192) | #3 | 1.0810 (SOTA) | Ranks 1-8 | Data/Tokenizer |
-| Gated Attention (our technique) | N/A | 1.1636 (V2 F2) | V2 factorial (rank 1 fork) | Architecture |
-| Full rank 1 stack (our V2 fork) | #7,#24,#25,#26 | 1.1636 (V2 F2) | V2 factorial | Combined |
+| Gated Attention (our technique) | N/A | 1.0801 (A3, 8×H100, over budget) | V2 rank 1 fork + headwise gate | Architecture |
+| Full rank 1 stack + our techniques | #7,#24,#25,#26 | 1.0805 (C6 mean, 8×H100) | V2 C6 submission config | Combined |
 
 Additional confirmed leaderboard techniques (not from papers above):
 - **LoRA TTT** — test-time training with low-rank updates
@@ -72,15 +72,15 @@ Additional confirmed leaderboard techniques (not from papers above):
 - **Parallel Residuals** — GPT-J style separate attention/MLP residual streams
 - **QK-Gain** — learnable per-head attention scaling (optimal 5.25)
 
-Current best: **~1.028 BPB** (down from 1.2244 baseline).
+Current SOTA: **1.0810 BPB** (bigbag, rank 1). Our best: **1.0805 BPB** (C6, 3-seed mean, 8×H100).
 
 ---
 
 ## Top 8 Most Actionable Techniques (Ranked by Impact/Effort)
 
-### ~~1. Value Residual Learning (ResFormer) — Paper #20~~ CONTEXT-DEPENDENT
-**Impact: ~~HIGH~~ DEPENDS ON STACK | Effort: LOW | Leaderboard: Tested by us**
-Cache V from layer 0, add a scaled residual V_0 to each subsequent layer's V matrix. **Session 11:** α=0.5 optimal on simple 10L MHA stack: pre-Q 1.2004 (-0.0036), TTT 1.2536 (-0.0048 vs control). Zero extra params. **V2 factorial (Session 12):** On rank 1 stack, ResFormer HURTS — F4 (RF only) = 1.1666 vs F1 (control) = 1.1641 (+0.0025 BPB worse). Parallel residuals already provide the gradient highway that ResFormer tries to create, making it redundant. **Use only on simple architectures without parallel residuals.**
+### ~~1. Value Residual Learning (ResFormer) — Paper #20~~ HURTS ON RANK 1 STACK
+**Impact: ~~HIGH~~ NEGATIVE on rank 1 stack | Effort: LOW | Leaderboard: Tested by us — fails at all scales**
+Cache V from layer 0, add a scaled residual V_0 to each subsequent layer's V matrix. **Session 11:** α=0.5 optimal on simple 10L MHA stack: pre-Q 1.2004 (-0.0036), TTT 1.2536 (-0.0048 vs control). Zero extra params. **V2 factorial (Session 12):** On rank 1 stack, ResFormer HURTS — F4 (RF only) = 1.1666 vs F1 (control) = 1.1641 (+0.0025 BPB worse). **8×H100 (Session 14):** Confirmed at scale — A2 (α=0.5) = 1.0828 vs A1 (control) = 1.0806 (+0.0022 worse). Parallel residuals already provide the gradient highway that ResFormer tries to create. **Do not use on rank 1-style configs.**
 
 ### ~~2. Rho-1 Selective Token Training — Paper #1~~ DOES NOT WORK
 **Impact: ~~HIGH~~ NEGATIVE | Effort: MEDIUM | Leaderboard: Tested by us — fails at 17M scale**
@@ -108,7 +108,7 @@ Replace the dense FFN with structured matrices. This gives 1.35x training speedu
 
 ### 8. Layer Tying / Depth Recurrence (MoEUT style) — Paper #7 ✅ NOW IN USE
 **Impact: HIGH | Effort: HIGH | Leaderboard: Proven (SOTA rank 1, 1.0810)**
-Share weights across layers but add lightweight per-layer routing or adapters. A 9-layer model with 3 unique layer groups would have ~1/3 the parameters but similar effective depth. The freed parameter budget goes to wider dimensions or more heads. This is the single biggest lever for the 16 MB constraint. **Now in use** — V2 factorial uses layers 3-4-5 looped 2× (17 virtual layers from 11 physical). V2 F2 = 1.1636 BPB.
+Share weights across layers but add lightweight per-layer routing or adapters. A 9-layer model with 3 unique layer groups would have ~1/3 the parameters but similar effective depth. The freed parameter budget goes to wider dimensions or more heads. This is the single biggest lever for the 16 MB constraint. **Now in use** — V2 uses layers 3-4-5 looped 2× (17 virtual layers from 11 physical). C6 = 1.0805 BPB (8×H100).
 
 ---
 
@@ -125,7 +125,7 @@ Share weights across layers but add lightweight per-layer routing or adapters. A
 - **QK-Gain 5.0** — learnable per-head attention scaling
 - **TTT (score-first)** — test-time training at evaluation
 
-**V2 stack (rank 1 fork train_gpt_v2.py, V2 F2 = 1.1636 BPB) — adds:**
+**V2 stack (rank 1 fork train_gpt_v2.py, C6 = 1.0805 BPB 8×H100, A3 = 1.0801 raw) — adds:**
 - **Depth Recurrence** — layers 3-4-5 looped 2× (17 virtual from 11 physical) [Survey #7]
 - **Parallel Residuals** — layers 7+ GPT-J style
 - **Sigmoid Skip Gates** — learned encoder-decoder bridging
