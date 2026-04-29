@@ -1,24 +1,28 @@
 # -----------------------------------------------------------------------
-# FOR FIRST-TIME SETUP: use  bash runs/quickstart.sh  instead.
-# It handles deps, data download, and runs the best config automatically.
-# This file is for session-specific experiments only.
-# -----------------------------------------------------------------------
+# GPTQ Elementwise dim=512 — 2×H100 RunPod
 #
-# Elementwise + MQA sweep — 2×H100 RunPod
-# 4 runs testing elementwise gated attention and MQA at reduced dims to fit 16 MB.
+# Tests full GPTQ (Frantar et al., ICLR 2023) ported from PG rank 9.
+# Naive int6 destroyed BPB (+0.19 gap). GPTQ should shrink it to ~+0.01.
+# Elementwise dim=512 was best pre-quant BPB but busted budget with int8.
+# GPTQ int6 should fit ~10 MB AND preserve quality.
+#
+# Key configs:
+#   sp8192_elementwise_gptq_dim512.env  — PRIMARY: elem dim=512 + GPTQ
+#   sp8192_combo_slim_gptq.env          — CONTROL: headwise dim=448 + GPTQ
+# -----------------------------------------------------------------------
 
-# === 1. Setup (skip if already done) ===
+# === 1. Setup ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
 git fetch origin
 git checkout James-experiment
 git pull origin James-experiment
 
-# === 2. Install deps (skip if already done) ===
+# === 2. Install deps ===
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-pip install huggingface_hub
+pip install huggingface_hub brotli
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
@@ -28,12 +32,79 @@ MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fi
 
 cd ..
 
-# === 4. Run elementwise + MQA sweep (4 runs, ~40 min) ===
-bash runs/run_elementwise_mqa_2gpu.sh
+# === 4. Preflight — verify GPTQ code is present ===
+python3 -c "
+import sys
+sys.path.insert(0, 'parameter-golf')
+with open('parameter-golf/train_gpt.py') as f:
+    code = f.read()
+checks = {
+    'gptq_quantize_weight': 'gptq_quantize_weight' in code,
+    '_save_gptq hooks': '_save_gptq' in code,
+    '_byte_shuffle': '_byte_shuffle' in code,
+    'generate_autoregressive_calib': 'generate_autoregressive_calib' in code,
+    'USE_GPTQ env var': 'USE_GPTQ' in code,
+}
+all_ok = all(checks.values())
+for name, ok in checks.items():
+    print(f'  {\"✓\" if ok else \"✗\"} {name}')
+print(f'\nPreflight: {\"PASS\" if all_ok else \"FAIL\"} ({sum(checks.values())}/{len(checks)} checks)')
+if not all_ok:
+    print('ERROR: GPTQ code not found. Did you pull the latest branch?')
+    sys.exit(1)
+"
 
-# === Expected output ===
-# E1: Elementwise dim=448 GQA      → probably over 16 MB, BPB ceiling
-# E2: Elementwise dim=416 GQA      → should fit, compare to Run A (1.2411)
-# E3: MQA dim=448 headwise         → MQA on SP8192 for first time
-# E4: MQA + Elementwise dim=416    → combo, compare to Run A (1.2411)
-# Winner = lowest BPB that fits under 16 MB → goes to 8×H100
+# === 5. [DONE] GPTQ benchmark (G1-G4) — results in findings.md Session 9 ===
+# === 6. [DONE] Benchmark sweep (D1-D4, L2, L3, A2) — results in findings.md Session 10 ===
+
+# === 7. GPTQ Quality Tuning (~76 min, 4 runs) ===
+#
+# Purpose: close the GPTQ gap from ~0.05 to Kevin Clark's ~0.012 BPB.
+# Base config: dim=512, 10L, MHA, elementwise + GPTQ int7 + train data.
+#
+# Trimmed to fit ~1h15m budget:
+#   Q0: Baseline (current GPTQ on new 10L MHA)         ~13 min
+#   Q1: Sequential block-by-block quantization          ~25 min  ← biggest suspected fix
+#   Q3: GPTQ on embedding layer                         ~13 min
+#   Q7: All combined (seq + hooks + embed)              ~25 min
+#
+# Deferred to follow-up: Q2 (hooks alone), Q6 (seq+hooks)
+#
+# === 7+8 Combined: GPTQ Tuning + ResFormer (~128 min, 8 runs) ===
+#
+# Part A — GPTQ tuning (Q0 already done, 3 runs ~63 min):
+#   Q1: Sequential block-by-block quantization          ~25 min
+#   Q3: GPTQ on embedding layer                         ~13 min
+#   Q7: All GPTQ combined (seq + hooks + embed)         ~25 min
+#
+# Part B — ResFormer alpha sweep (5 runs ~65 min):
+#   R0: alpha=0.0 (control)    R1: 0.1    R2: 0.3    R3: 0.5    R4: 0.7
+#
+# Deferred: Q2/Q6 (hooks), R5-R7 (config variants with best alpha)
+#
+bash runs/run_combined_2gpu.sh
+#
+# Or run separately:
+# bash runs/run_gptq_tune_trimmed_2gpu.sh   # GPTQ only (~63 min)
+# bash runs/run_resformer_sweep_2gpu.sh      # ResFormer only (~104 min)
+# bash runs/run_gptq_tune_2gpu.sh            # Full GPTQ 8-run (~130 min)
+
+# === 9. V2 Factorial — Fork of Rank 1 + Our Techniques (~117 min, 9 runs) ===
+#
+# Forked rank 1's train_gpt.py (1.0810 BPB) as train_gpt_v2.py.
+# Full leaderboard stack: FA3, 11L, 4×MLP, depth recurrence (3-4-5 loop),
+# parallel residuals, sigmoid skip gates, partial RoPE, XSA, MuonEq-R,
+# EMA, GPTQ int6+brotli.
+#
+# 3×3 factorial: (PR vs RF vs Both) × (No Gate vs Headwise vs Elementwise)
+#   F1: PR + No Gate (CONTROL = rank 1 default)
+#   F2: PR + Headwise Gate         F3: PR + Elementwise Gate
+#   F4: RF + No Gate               F5: RF + Headwise Gate
+#   F6: RF + Elementwise Gate      F7: PR+RF + No Gate
+#   F8: PR+RF + Headwise Gate      F9: PR+RF + Elementwise Gate
+#
+# NOTE: Requires Flash Attention 3 (H100 only):
+#   pip install --no-cache-dir \
+#     "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+#
+bash runs/run_v2_factorial_2gpu.sh

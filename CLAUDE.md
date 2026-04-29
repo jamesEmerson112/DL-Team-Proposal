@@ -138,3 +138,52 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [feat] Created `docs/James_test/pg_grant_application.txt` — PG Development grant ($500) application with 3 fields: approach (1,500 chars), tried so far (255 chars), PR link
 - [ref] PR submission: https://github.com/openai/parameter-golf/pull/1799
 - [user] User is An Thien Vo, Georgia Tech grad student, CS 7643 Deep Learning. Spent $240+ personal funds on PG experiments.
+
+### 2026-04-27 (Session 9)
+- [edit] Updated `docs/James_test/18_llm-parameter-anatomy.md` — expanded from SP1024 baseline-only to include 4 new sections:
+  - **SP8192 Combo Slim (Run 11, 16.4M):** full param breakdown at dim=448 with headwise gate, comparison table vs baseline showing embedding growth (3.1%→22.4%) and dim-reduction tradeoffs
+  - **SP8192 Combo (Run 10, 20.8M):** dim=512 param breakdown, delta table showing where +4.4M params come from (MLP half, attention third, embedding sixth), elementwise variant note
+  - **Quantization Anatomy:** aggregate compression comparison (int8+zlib 15.35 MB vs GPTQ 10.50 MB), per-component sensitivity table (embedding=low tolerance, MLP=high, early blocks 30× more important than late), 4 GPTQ bugs/lessons (inference_mode poison, percentile vs k×std, int7>int6, train>AR calibration)
+  - **Budget Math:** GPTQ compression ratio (0.684×) applied to 5 configs, showing dim=512/11L/MLP3×/elementwise all fit under 16 MB with GPTQ
+- [edit] Updated cross-reference section with current `train_gpt.py` line numbers (GPT class moved 765→1370 after GPTQ additions)
+- [preserved] Original PG Baseline (SP1024, 17M) section and Forward Pass Pipeline unchanged
+
+### 2026-04-28 (Session 10)
+- [feat] Created 7 benchmark env configs (`bench_dim448_elem.env`, `bench_dim512_elem.env`, `bench_dim768_elem.env`, `bench_dim1024_elem.env`, `bench_10L_dim512_elem.env`, `bench_11L_dim512_elem.env`, `bench_mha_dim512_elem.env`) and `runs/run_benchmark_sweep_2gpu.sh`
+- [run] Executed 7-run sweep on 2×H100: dim (448/512/768/1024), layers (9/10/11), attention (GQA/MHA) — all elementwise + GPTQ int7 + train data calib
+- [finding] Pre-quant BPB scales well with model size: D2=1.2120, L3=1.2042, A2=1.2045 — all beat baseline (1.2244) pre-quant
+- [finding] GPTQ gap ~0.05 is the sole bottleneck — 4× worse than Kevin Clark's ~0.012
+- [finding] Bigger models have smaller GPTQ gaps: D4 (dim=1024) gap=0.026, D1 (dim=448) gap=0.054
+- [finding] Best under-budget candidates if GPTQ gap fixed: L3 (11L, 1.2042 pre-Q, 15.27 MB) and A2 (MHA, 1.2045 pre-Q, 14.24 MB)
+- [finding] MHA beats GQA by -0.0107 TTT BPB at +1.3 MB cost (A2 vs D2)
+- [edit] Updated `docs/parameter-golf/findings.md` with Session 10 benchmark sweep results
+- [edit] Updated `docs/James_test/run12_2gpu_commands.txt` with benchmark sweep step
+
+### 2026-04-28 (Session 11)
+- [feat] Implemented 4 GPTQ tuning techniques: sequential block quantization (`GPTQ_SEQUENTIAL`), hook-based Hessian collection (`GPTQ_USE_HOOKS`), GPTQ on embeddings (`GPTQ_EMBED`), configurable dampening (`GPTQ_PERCDAMP`)
+- [feat] Implemented ResFormer value residual learning (`VALUE_RESIDUAL_ALPHA`): v = (1-alpha)*v + alpha*v0, caches V from layer 0, blends into all subsequent layers
+- [feat] Created `runs/run_combined_2gpu.sh` (GPTQ tuning + ResFormer in one script), `runs/run_gptq_tune_2gpu.sh`, `runs/run_gptq_tune_trimmed_2gpu.sh`, `runs/run_resformer_sweep_2gpu.sh`
+- [feat] Created `runs/configs/gptq_tune_10L_mha.env` (dim=512, 10L, MHA base config for tuning)
+- [run] GPTQ tuning Q0-Q7: Q0 baseline (1.2579 TTT), Q1 sequential (1.3916 — WORSE), Q3 embed GPTQ (1.6897 — WORSE), Q7 all combined (1.8679 — WORST)
+- [finding] **GPTQ tuning approaches all failed** — sequential, embed GPTQ, and combined all dramatically worse than baseline. Sequential Hessians through dequantized blocks are inferior. Embedding GPTQ's frequency Hessian is wrong for lookup tables.
+- [run] ResFormer alpha sweep R0-R4: R0=1.2584, R1(0.1)=1.2545, R3(0.5)=1.2536, R4(0.7)=1.2551
+- [finding] **ResFormer works!** Alpha=0.5 is optimal: pre-Q 1.2004 (-0.0036), TTT 1.2536 (-0.0048 vs control). Zero extra params/size. GPTQ gap also slightly improved (0.0532 vs 0.0544).
+- [edit] Updated `docs/parameter-golf/findings.md` with Session 11 results
+- [bugfix] Fixed embedding GPTQ Hessian shape: was [vocab, vocab], needed [dim, dim]. Fixed with `H = W^T @ diag(freq) @ W`
+- [bugfix] Fixed sequential GPTQ double-quantization: save/restore original weights, only use sequential Hessians
+
+### 2026-04-28 (Session 12)
+- [feat] Implemented V2 factorial plan: forked rank 1's train_gpt.py (1.0810 BPB) as `parameter-golf/train_gpt_v2.py`
+  - Decompressed rank 1's LZMA wrapper (470 lines) into editable Python
+  - Added gated attention (`GATED_ATTN` env var): Q projection widened by gate_dim, gate applied after FA3+XSA, before output proj
+  - Added ResFormer value residual (`VALUE_RESIDUAL_ALPHA` env var): V₀ cached from first encoder layer, blended via `(1-alpha)*v + alpha*v0`
+  - Adapted tensor shapes for FA3 output format `[bsz, seqlen, num_heads, head_dim]` (vs SDPA's `[bsz, num_heads, seqlen, head_dim]`)
+  - Rank 1 stack preserved: FA3, 11L×512d, 4×MLP, LeakyReLU², depth recurrence (3-4-5 loop), parallel residuals, sigmoid skip gates, partial RoPE (16/64), XSA, MuonEq-R, EMA, GPTQ int6+brotli
+- [feat] Created `runs/configs/v2_base.env` — rank 1 defaults with our novelty toggles (GATED_ATTN=none, VALUE_RESIDUAL_ALPHA=0.0)
+- [fix] Removed no-op DATA_PATH/TOKENIZER_PATH from v2_base.env — rank 1 uses DATA_DIR, not these env vars
+- [feat] Created `runs/run_v2_factorial_2gpu.sh` — 9-run 3×3 factorial sweep with results summary parser matching rank 1's log format
+- [edit] Updated `docs/James_test/run12_2gpu_commands.txt` — added step 9 for V2 factorial sweep with FA3 install note
+- [plan] 3×3 factorial: (PR only vs RF only vs PR+RF) × (No Gate vs Headwise vs Elementwise) = 9 runs
+  - F1 = rank 1 control (no additions), F2-F3 = +gated attn, F4-F6 = ResFormer instead of PR, F7-F9 = both
+  - Success criteria: any run beats our best 2×H100 BPB (1.2338)
+- [todo] Run V2 factorial on 2×H100 RunPod (~117 min, 9 runs × ~13 min each). Requires FA3 wheel install.

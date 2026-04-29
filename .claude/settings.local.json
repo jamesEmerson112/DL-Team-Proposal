@@ -12,7 +12,12 @@
       "Bash(curl -s https://api.github.com/repos/openai/parameter-golf/contents/records/track_10min_16mb)",
       "Bash(curl:*)",
       "WebFetch(domain:arxiv.org)",
-      "Bash(find /tmp/rho -type f -name *.py)"
+      "Bash(find /tmp/rho -type f -name *.py)",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/voan2/Documents/GitHub/DL-Team-Proposal/parameter-golf/logs/**)",
+      "Bash(done)",
+      "Bash(python -c \":*)"
     ]
   }
 }
