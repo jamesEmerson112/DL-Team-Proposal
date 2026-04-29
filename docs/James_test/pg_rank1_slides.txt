@@ -1,0 +1,286 @@
+================================================================================
+SLIDE 1 — Architecture Innovations
+"How the Rank 1 Model Is Structurally Different"
+================================================================================
+
+1. DEPTH RECURRENCE — Layers 3-4-5 Looped 2x (17 Virtual Layers) [Survey #7]
+   Paper: MoEUT: Mixture-of-Experts Universal Transformers (NeurIPS 2024)
+   Link:  https://proceedings.neurips.cc/paper_files/paper/2024/hash/321387ba926b8e58d3591c0aeb52ffc2-Abstract-Conference.html
+
+   - Only 11 physical layers exist, but layers 3, 4, and 5 are repeated twice
+     during the forward pass, creating 17 virtual layers of depth.
+   - The encoder path runs [0,1,2,3,4,5,3,4,5,...] and the decoder path
+     runs [...,5,6,7,8,9,10], so the core "transition" layers get 3x the
+     gradient signal without adding any new parameters.
+   - Looping activates at 35% through training (not from the start) to let
+     each layer specialize first before weight-sharing kicks in.
+   - Why it matters: More effective depth = better BPB, but zero increase
+     in model size — critical under the 16 MB artifact budget.
+
+2. PARALLEL RESIDUALS — Layers 7+, GPT-J Style [Not in survey]
+   Origin: GPT-J-6B architecture (EleutherAI, Wang & Komatsuzaki, 2021)
+   Link:   https://github.com/kingoflolz/mesh-transformer-jax
+
+   - Standard transformers are sequential: x -> Attention -> x -> MLP -> x
+     (MLP sees attention's output).
+   - Parallel residuals run attention and MLP simultaneously on the same input:
+     x_out = x + scale_a * Attention(x) + scale_m * MLP(x)
+   - Applied only to layers 7+ (deeper layers), while layers 0-6 remain
+     sequential — a hybrid design.
+   - Why it matters: Faster gradient flow through deep layers and allows
+     attention and MLP to learn independent transformation paths without
+     one bottlenecking the other.
+
+3. SIGMOID SKIP GATES [Not in survey]
+   Origin: Competition-developed technique (rank 1 submission)
+
+   - Skip connections from encoder layers to corresponding decoder layers
+     are gated by a learnable sigmoid parameter per layer.
+   - gate = sigmoid(skip_gate_param), then output = lerp(skip_signal, x, gate)
+   - The model learns how much of the encoder's representation to inject
+     into each decoder layer — from "fully skip" to "fully ignore."
+   - Why it matters: More expressive than fixed residual connections.
+     Especially important when depth recurrence means the same physical
+     layer appears in both encoder and decoder paths.
+
+4. LeakyReLU-SQUARED ACTIVATION [Not in survey]
+   Origin: Competition-developed; combines LeakyReLU + ReLU-squared research
+
+   - MLP activation: LeakyReLU(x, negative_slope=0.5), then square the result.
+   - Standard ReLU kills negative activations entirely (dead neurons).
+     LeakyReLU(0.5) lets negative values through at half scale, then
+     squaring amplifies strong signals quadratically in both directions.
+   - Formula: f(x) = (max(x, 0.5x))^2
+   - Leaderboard first: Mar 23, 2026 — combined with legal TTT for 1.1194 BPB.
+   - Why it matters: Zero extra parameters, zero speed cost, smoother
+     gradients. Our own Run 7 confirmed -0.0008 BPB improvement over
+     standard ReLU-squared on SP1024.
+
+5. LN SCALE — 1/sqrt(layer+1) [Not in survey]
+   Origin: Competition-developed technique
+
+   - LayerNorm output is scaled by 1/sqrt(layer_index + 1).
+   - Layer 0 gets scale 1.0, layer 5 gets ~0.41, layer 10 gets ~0.30.
+   - Deeper layers produce progressively smaller magnitude outputs,
+     preventing residual stream magnitude from growing with depth.
+   - Why it matters: Stabilizes gradient flow in deep networks, especially
+     important when depth recurrence creates 17 effective layers.
+     Helps GPTQ quantization — smaller magnitudes = fewer outliers.
+
+6. PARTIAL RoPE — 16 of 64 Dims [Not in survey]
+   Paper: RoFormer: Enhanced Transformer with Rotary Position Embedding
+          (Su et al., 2021/2023)
+   Link:  https://arxiv.org/abs/2104.09864
+
+   - Standard RoPE applies rotary position embeddings to ALL head dimensions.
+     Partial RoPE applies them to only the first 16 of 64 dims per head.
+   - The remaining 48 dims are position-free, acting as pure content
+     features that don't decay with distance.
+   - Why it matters: At 1024-token context length, full positional encoding
+     is overkill. Partial RoPE gives the model 75% content-only capacity
+     while retaining enough positional awareness for causal modeling.
+
+
+================================================================================
+SLIDE 2 — Attention, Optimization & Compression
+"How Training and Evaluation Are Done Differently"
+================================================================================
+
+1. XSA — EXCLUSIVE SELF-ATTENTION (All 11 Layers) [Survey #26]
+   Paper: Exclusive Self-Attention (arXiv 2026)
+   Link:  https://arxiv.org/abs/2603.09078
+   PG Leaderboard: Proven at ranks 8, 10, 14, 15 (best 1.0979 BPB)
+
+   - After computing attention output y = softmax(QK^T/sqrt(d))V, XSA
+     removes the component of y that is parallel to the value vector V:
+       projection = (y dot normalize(V)) * normalize(V)
+       y_out = y - projection
+   - Intuition: standard attention can "echo" back the value a token already
+     has. XSA forces the output to be orthogonal to V — the model can only
+     add NEW information from context, not repeat what's already there.
+   - Applied to all 11 layers with GQA-aware grouped projection.
+   - Why it matters: Noise cancellation in attention. Consistently
+     outperforms standard self-attention up to 2.7B parameters.
+     Widely adopted across top PG submissions.
+
+2. QK-GAIN — Learnable Attention Temperature (5.25) [Not in survey]
+   Origin: Competition-developed (ranks 1-6 all use 5.0-5.25)
+
+   - Replaces the fixed 1/sqrt(d_head) scaling with a learnable per-head
+     parameter. Standard scaling: 1/sqrt(64) = 0.125. QK-Gain: 5.25.
+   - Applied as: q = q * gain_per_head, BEFORE computing attention.
+   - Tuning history on PG: 4.0 -> 5.0 -> 5.25, each step improved BPB.
+   - Why it matters: Controls attention sharpness per head. Some heads
+     benefit from sharper (more decisive) attention, others from softer.
+     A tuned constant beats the fixed sqrt(d) assumption.
+
+3. MuonEq-R OPTIMIZER (WD=0.095, Row-Norm) [Not in survey]
+   Reference: arXiv:2603.28254 (Muon variant)
+   PG Leaderboard: Used in ranks 1, 2, 5, 6, 7
+
+   - Muon uses Newton-Schulz orthogonalization (5 iterations) to find
+     the closest orthogonal matrix to each gradient update — keeps weight
+     matrices well-conditioned throughout training.
+   - "Eq-R" variant adds row normalization: gradient of each neuron
+     (row) is normalized before the orthogonalization step, so no single
+     neuron dominates the update.
+   - Learning rates are per-component: matrix_lr=0.022, scalar_lr=0.02,
+     embed_lr=0.03. Momentum warms from 0.92 to 0.99 over 1500 steps.
+   - Weight decay 0.095 is unusually high — this is intentional because
+     smaller weights compress better under GPTQ quantization.
+   - Why it matters: Better-conditioned weights = faster convergence in
+     10 minutes AND better quantization quality afterward.
+
+4. EMA — EXPONENTIAL MOVING AVERAGE (Decay 0.9965) [Survey #25]
+   Paper: Early Weight Averaging (COLM 2024)
+   Link:  https://arxiv.org/abs/2306.03241
+   PG Leaderboard: Proven at ranks 7, 12, 13, 14
+
+   - Maintains a shadow copy of all weights: ema = decay * ema + (1-decay) * current.
+   - After training completes, the EMA weights replace the final weights.
+   - Decay 0.9965 means the average window is ~286 steps (1/(1-0.9965)).
+   - Why it matters: Smooths out training noise — the averaged model
+     generalizes better than the final checkpoint. Free at inference
+     (just use the averaged weights). Also makes weight distributions
+     smoother, which improves GPTQ compression quality.
+
+5. GPTQ QUANTIZATION — int6 Matrices + int8 Embeddings + Brotli [Not in survey]
+   Paper: GPTQ: Accurate Post-Training Quantization for Generative
+          Pre-trained Transformers (Frantar et al., ICLR 2023)
+   Link:  https://arxiv.org/abs/2210.17323
+
+   - Post-training quantization using second-order (Hessian) information
+     to decide how to round each weight with minimal output error.
+   - Mixed precision: weight matrices quantized to int6 (64 levels),
+     embedding table kept at int8 (256 levels, more sensitive to errors).
+   - SDClip: clips outlier weights at k * std per-row (k=12.85 for
+     matrices, k=20.0 for embeddings) — principled entropy-driven clipping.
+   - Byte-shuffling + Brotli-11 compression on the quantized artifact.
+   - Result: 35.9M float32 params -> 16.01 MB on disk.
+   - GPTQ quality gap: only +0.0055 BPB (rank 1's pipeline), vs our
+     +0.053 gap — their full pipeline (high WD + EMA + SDClip) is key.
+   - Why it matters: Enables a 36M-parameter model to fit in 16 MB,
+     more than 2x the parameters our int8+zlib approach can afford.
+
+6. TTT — TEST-TIME TRAINING (Score-First, 3 Epochs, LR=0.005) [Not in survey]
+   Origin: Competition-developed technique (@dexhunter PR #1413,
+           @abaybektursun PR #549 for legal score-first variant)
+
+   - At evaluation time, the model adapts its weights to the validation
+     data — but LEGALLY (no future information leakage):
+     (a) Divide validation tokens into 32K-token chunks
+     (b) For each chunk: FIRST score all tokens (no_grad), THEN train
+         on those already-scored tokens for 3 epochs
+     (c) SGD with momentum=0.9, cosine LR from 0.005 to 0.0025
+   - Compliance: satisfies all 4 rules (causality, normalized distribution,
+     score-before-update, single pass per token).
+   - Typical gain: ~0.002-0.005 BPB improvement. Small but free —
+     the model is already within budget, TTT just improves eval quality.
+   - Why it matters: The model "warms up" to the validation distribution
+     as it evaluates, adapting to domain-specific patterns in FineWeb
+     that it didn't see enough during the 10-minute training window.
+
+
+================================================================================
+SLIDE 3 — The Full Stack: Why This Combo Is the Best
+"11 Physical Layers, 17 Virtual, 35.9M Params, 16 MB, 1.0810 BPB"
+================================================================================
+
+THE COMPOUND EFFECT
+   These techniques are not additive — they compound. Each technique
+   creates conditions that make the others more effective:
+
+   Training Speed Chain:
+   - FlashAttention-3 [Survey #24] (2x over FA2) + LeakyReLU² (zero overhead) + Partial
+     RoPE (75% fewer rotary ops) -> more steps in 10 minutes -> lower BPB
+
+   Depth Chain:
+   - Depth Recurrence (17 virtual layers) + Parallel Residuals (independent
+     paths in layers 7+) + Skip Gates (learned encoder-decoder bridging)
+     + LN Scale (stable deep gradients) -> effectively deeper model with
+     zero extra parameters
+
+   Attention Quality Chain:
+   - XSA (removes noise from attention) + QK-Gain 5.25 (sharper attention)
+     + Partial RoPE (content-rich features) -> each attention head
+     extracts more useful information per layer
+
+   Compression Chain:
+   - High weight decay (0.095) + EMA smoothing (0.9965) + MuonEq-R
+     (well-conditioned weights) -> smoother weight distributions ->
+     GPTQ int6 achieves only +0.0055 BPB gap -> 35.9M params fit in
+     16 MB (vs our int8+zlib which caps at ~16M params)
+
+   Eval Recovery Chain:
+   - GPTQ loses ~0.005 BPB -> TTT score-first recovers ~0.003 BPB ->
+     Sliding window eval recovers another ~0.002 BPB -> net loss
+     from compression is nearly zero
+
+BY THE NUMBERS
+   - Architecture: 11L x 512d x 8H/4KV, 4x MLP (2048 hidden)
+   - Physical layers: 11 | Virtual layers: 17 (depth recurrence)
+   - Raw parameters: 35.94M (float32 = ~137 MB)
+   - Compressed artifact: 16.01 MB (GPTQ int6 + brotli = 8.6x compression)
+   - Training: 10 minutes on 8xH100 with MuonEq-R optimizer
+   - Final BPB: 1.0810 (PG baseline: 1.2244, delta: -0.1434)
+
+OUR RESULTS BUILDING ON THIS STACK
+   - Run 11 (our best submittable): 1.2077 BPB
+     SP8192 + headwise gated attn + LeakyReLU² + QK-Gain + TTT
+     16.36M params, 15.35 MB (int8+zlib)
+   - V2 Factorial F2 (rank 1 fork + our headwise gate): 1.1636 BPB
+     Full rank 1 stack + headwise gated attention
+     35.99M params, 16.01 MB (GPTQ int6 + brotli)
+   - The gap from Run 11 to V2 F2 (-0.0441 BPB) comes almost entirely
+     from the compression chain: GPTQ int6 allows 2x more parameters
+     in the same 16 MB budget.
+
+KEY TAKEAWAY
+   No single technique here is a breakthrough. The rank 1 submission wins
+   because every component is tuned to reinforce the others:
+   - Architecture maximizes depth without parameters
+   - Optimizer and EMA produce quantization-friendly weights
+   - GPTQ unlocks 2x the parameter budget
+   - TTT recovers whatever quantization loses
+   The whole is greater than the sum of its parts.
+
+
+================================================================================
+REFERENCES
+================================================================================
+
+[1] MoEUT: Mixture-of-Experts Universal Transformers
+    NeurIPS 2024
+    https://proceedings.neurips.cc/paper_files/paper/2024/hash/321387ba926b8e58d3591c0aeb52ffc2-Abstract-Conference.html
+
+[2] GPT-J-6B (Parallel Residuals architecture)
+    EleutherAI, Wang & Komatsuzaki, 2021
+    https://github.com/kingoflolz/mesh-transformer-jax
+
+[3] RoFormer: Enhanced Transformer with Rotary Position Embedding
+    Su et al., 2021
+    https://arxiv.org/abs/2104.09864
+
+[4] Exclusive Self-Attention (XSA)
+    arXiv 2026
+    https://arxiv.org/abs/2603.09078
+
+[5] MuonEq-R Optimizer
+    arXiv 2026
+    https://arxiv.org/abs/2603.28254
+
+[6] Early Weight Averaging
+    COLM 2024
+    https://arxiv.org/abs/2306.03241
+
+[7] GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers
+    Frantar et al., ICLR 2023
+    https://arxiv.org/abs/2210.17323
+
+[8] FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision
+    NeurIPS 2024
+    https://arxiv.org/abs/2407.08608
+
+[9] Parameter Golf Competition
+    OpenAI, 2026
+    https://github.com/openai/parameter-golf

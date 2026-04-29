@@ -29,6 +29,15 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
+| F2¶ | **V2 PR + Headwise Gate** | 35.99M | — | **1.1636** | 1,030 | — | int6+brotli | 16.01 MB | Tight |
+| F1¶ | V2 PR + No Gate (CTRL) | 35.94M | — | 1.1641 | 1,058 | — | int6+brotli | 15.99 MB | Tight |
+| F7¶ | **V2 PR+RF + No Gate** | 35.94M | — | **1.1636** | — | — | int6+brotli | 15.99 MB | Tight |
+| F8¶ | V2 PR+RF + Headwise Gate | 35.99M | — | 1.1650 | — | — | int6+brotli | 16.01 MB | Tight |
+| F5¶ | V2 RF + Headwise Gate | 35.99M | — | 1.1661 | 1,036 | — | int6+brotli | 16.01 MB | Tight |
+| F3¶ | V2 PR + Elementwise Gate | 38.83M | — | 1.1665 | 1,011 | — | int6+brotli | 17.21 MB | **No** |
+| F4¶ | V2 RF + No Gate | 35.94M | — | 1.1666 | 1,044 | — | int6+brotli | 15.99 MB | Tight |
+| F9¶ | V2 PR+RF + Elementwise Gate | 38.83M | — | 1.1686 | — | — | int6+brotli | 17.22 MB | **No** |
+| F6¶ | V2 RF + Elementwise Gate | 38.83M | — | 1.1700 | 1,006 | — | int6+brotli | 17.22 MB | **No** |
 | E1† | Elementwise dim=448 GQA | ~16.4M | — | **1.2338** | 2,644 | — | int8 | 16.67 MB | **No** |
 | 13† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.1990 | 1.2384 | 2,749 | 218ms | int8 | 15.09 MB | Yes |
 | D† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.2021 | 1.2396 | 2,652 | 226ms | int8 | 15.08 MB | Yes |
@@ -58,7 +67,7 @@
 | D1‡ | Elem dim=448 9L GQA | 18.1M | 3.3216 | 1.2859 | 2,618 | — | GPTQ | 10.20 MB | Yes |
 | ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). GPTQ val_bpb = TTT BPB (post-quant + TTT recovery).**
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). ¶ Runs F1-F6: V2 factorial (rank 1 fork + our techniques), SP8192, 2×H100, FA3, int6+brotli, 2026-04-28. val_bpb = TTT BPB. Size = weights only (code adds 16.6-50 KB depending on LZMA compression).**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 
@@ -300,6 +309,51 @@ Note: R2 (alpha=0.3) not run. R3 is alpha=0.5 (run ID `resformer_a05`).
 3. **GPTQ gap also improved** — 0.0532 vs 0.0544, suggesting V₀ residual makes weights more compressible (smoother value distribution)
 4. **Free improvement** — no extra params, no extra memory, no extra compute, no size increase
 5. **Projected 8×H100** with alpha=0.5: pre-Q ~1.168 (from 2×H100 scaling factor), TTT ~1.221 — would beat baseline (1.2244) even after GPTQ
+
+### Session 12 — V2 Factorial: Rank 1 Fork + Our Techniques (2×H100, 2026-04-28)
+
+Forked rank 1's train_gpt.py (bigbag, 1.0810 BPB) as `train_gpt_v2.py`. Full leaderboard stack: FA3, 11L×512d×8H/4KV, 4×MLP, LeakyReLU², depth recurrence (layers 3-4-5 looped 2×, 17 virtual from 11 unique), parallel residuals (layers 7+), sigmoid skip gates, partial RoPE (16/64 dims), XSA on all 11 layers, MuonEq-R, EMA (0.9965), GPTQ int6+brotli, score-first TTT.
+
+Added our two novelty techniques: gated attention (`GATED_ATTN`) and ResFormer value residual (`VALUE_RESIDUAL_ALPHA`).
+
+3×3 factorial: (PR only vs RF only vs PR+RF) × (No Gate vs Headwise vs Elementwise).
+
+| Run | Config | Gate | RF α | PR Start | Params | Pre-Q BPB | Quant BPB | SW BPB | TTT BPB | Weights | Total | Budget? |
+|-----|--------|------|------|----------|--------|-----------|-----------|--------|---------|---------|-------|---------|
+| F7 | **PR+RF + No Gate** | none | 0.5 | 7 | 35.94M | 1.1900 | 1.1956 | 1.1790 | **1.1636** | 15.99 MB | 16.04 MB | Tight† |
+| F2 | PR + Headwise | head | 0.0 | 7 | 35.99M | 1.1921 | 1.1976 | 1.1812 | 1.1636 | 16.01 MB | 16.06 MB | Tight† |
+| F1 | PR + No Gate (CTRL) | none | 0.0 | 7 | 35.94M | 1.1898 | 1.1951 | 1.1790 | 1.1641 | 15.99 MB | 16.04 MB | Tight† |
+| F8 | PR+RF + Headwise | head | 0.5 | 7 | 35.99M | 1.1959 | 1.2014 | 1.1850 | 1.1650 | 16.01 MB | 16.06 MB | Tight† |
+| F5 | RF + Headwise | head | 0.5 | 999 | 35.99M | 1.1971 | 1.2024 | 1.1861 | 1.1661 | 16.01 MB | 16.06 MB | Tight† |
+| F3 | PR + Elementwise | elem | 0.0 | 7 | 38.83M | 1.1951 | 1.2003 | 1.1840 | 1.1665 | 17.21 MB | 17.26 MB | **No** |
+| F4 | RF + No Gate | none | 0.5 | 999 | 35.94M | 1.1940 | 1.1996 | 1.1832 | 1.1666 | 15.99 MB | 16.04 MB | Tight† |
+| F9 | PR+RF + Elementwise | elem | 0.5 | 7 | 38.83M | 1.1998 | 1.2051 | 1.1888 | 1.1686 | 17.22 MB | 17.27 MB | **No** |
+| F6 | RF + Elementwise | elem | 0.5 | 999 | 38.83M | 1.2015 | 1.2069 | 1.1907 | 1.1700 | 17.22 MB | 17.27 MB | **No** |
+
+† "Total" includes 50 KB for our decompressed train_gpt_v2.py. Rank 1's LZMA code is ~16.6 KB. With LZMA code, all non-elementwise runs fit under budget. Weights-only size is what matters for submission.
+
+**3×3 Factor Matrix** (TTT BPB, best in bold):
+
+| | No Gate | Headwise | Elementwise |
+|--|---------|----------|-------------|
+| **PR only** | 1.1641 | 1.1636 | 1.1665 (over budget) |
+| **RF only** | 1.1666 | 1.1661 | 1.1700 (over budget) |
+| **PR + RF** | **1.1636** | 1.1650 | 1.1686 (over budget) |
+
+Note: F7 (1.16355) and F2 (1.16361) differ by only 0.00006 BPB — effectively tied within run-to-run noise.
+
+**Key findings:**
+
+1. **Two configs tied for best: F7 (PR+RF, no gate) and F2 (PR, headwise gate)** — 1.16355 vs 1.16361, delta 0.00006 BPB (noise). F7 has the edge on budget (15.99 MB weights, no extra params). F2 adds +21 KB but is more novel for our paper.
+2. **ResFormer helps when stacked with PR** — F7 (PR+RF, 1.1636) beats F1 (PR only, 1.1641) by -0.0005. But RF alone is worse: F4 (RF only, 1.1666) loses to F1 by +0.0025. ResFormer is only beneficial as a complement to parallel residuals, not a replacement.
+3. **Headwise gate helps on PR, but not on PR+RF** — F2 beats F1 by -0.0005 (headwise helps PR). But F8 (1.1650) is worse than F7 (1.1636) — headwise hurts when RF is also present. The two techniques compete for the same "residual quality" niche.
+4. **Elementwise busts budget** — +2.9M extra params from gate projection pushes all elementwise runs to 17.2+ MB. Also slower: 1006-1011 steps vs 1058 for F1. Dead on arrival for 16 MB submission.
+5. **RF alone is strictly worse than PR alone** — F4 (RF only, 1.1666) vs F1 (PR only, 1.1641). Consistent across all gate types. Rank 1's parallel residuals + sigmoid skip gates are a stronger residual mechanism.
+6. **Budget is extremely tight** — All non-elementwise runs fit under 16 MB (weights only). The 50 KB code overhead from our decompressed file is the main risk; LZMA compression would bring it to ~16.6 KB like rank 1.
+
+**For 8×H100 submission:** Two equally viable options:
+- **F7 config (PR+RF, no gate)** — technically best TTT BPB (1.16355), same param count as rank 1 (35.94M), safest on budget (15.99 MB weights). Less novel for paper (ResFormer is not our original technique).
+- **F2 config (PR, headwise gate)** — tied for best (1.16361), adds our original gated attention technique for paper novelty. Slightly riskier on budget (16.01 MB weights).
 
 ---
 
