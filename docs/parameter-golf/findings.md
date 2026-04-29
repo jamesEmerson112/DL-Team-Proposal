@@ -4,16 +4,49 @@
 
 ## Official Runs — 8×H100 (sorted by BPB, best first)
 
-| Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Size (int8+zlib) | Budget? |
-|-----|-----------|--------|----------|---------|-------|----------|-------------------|---------|
-| 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | 19.41 MB | **No** |
-| 11 | **SP8192 combo slim + TTT** | 16.36M | 3.1197 | **1.2077** | 11,073 | 54ms | 15.35 MB | **Yes** |
+| Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
+|-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
+| **C6●** | **V2 Headwise + emb7+eclip15 (3-seed mean)** | **35.99M** | **2.7910** | **1.0805** | **4,467** | — | **int6+brotli** | **15.70 MB** | **Yes** |
+| A1● | V2 F1 control (no additions) | 35.94M | 2.7912 | 1.0806 | 4,580 | — | int6+brotli | 15.98 MB | Yes |
+| A3● | V2 F2 headwise (default compression) | 35.99M | 2.7899 | 1.0801 | — | — | int6+brotli | 15.99 MB | Tight |
+| A2● | V2 F7 (PR+RF, α=0.5) | 35.94M | 2.7971 | 1.0828 | 4,516 | — | int6+brotli | 15.98 MB | Yes |
+| 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | int8+zlib | 19.41 MB | **No** |
+| 11 | SP8192 combo slim + TTT | 16.36M | 3.1197 | 1.2077 | 11,073 | 54ms | int8+zlib | 15.35 MB | Yes |
 
-**PyTorch 2.6, SP8192, 10-min wall clock. PG baseline: 1.2244 BPB.**
+**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. Current SOTA: 1.0810 BPB.**
 
-**Best submittable run: Run 11 (SP8192 combo slim + TTT)** — 1.2077 BPB, **-0.0167 below PG baseline**, 15.35 MB (under budget with 0.52 MB headroom). First run that beats baseline AND fits in 16 MB.
+**Best submittable run: C6 (V2 Headwise + emb7+eclip15)** — 3-seed mean **1.0805 BPB**, **-0.1439 below PG baseline**, **-0.0005 below SOTA** (1.0810). 15.70 MB (under budget with 0.30 MB headroom). All 3 seeds under budget, train <600s, eval <600s.
 
-### 3-Seed Reproducibility — SP8192 Combo Slim + TTT, 8×H100
+> **HOLD — DO NOT SUBMIT YET.** We match SOTA (1.0805 vs 1.0810) but don't clear the ≥0.005 nats margin required for a SOTA record. Keep headwise gated attention technique secret until we find enough improvement to clear the threshold. See "Submission Strategy" section below.
+
+### 3-Seed Reproducibility — V2 C6 (Headwise + emb7+eclip15), 8×H100
+
+| Seed | val_loss (TTT) | val_bpb (TTT) | Steps | Weights (int6+brotli) | Eval time |
+|------|----------------|---------------|-------|-----------------------|-----------|
+| 42 | 2.7945 | 1.0818 | 4,469 | 15,697,552 (15.70 MB) | 394s |
+| 1337 | 2.7883 | **1.0794** | 4,465 | 15,694,065 (15.69 MB) | 335s |
+| 2025 | 2.7908 | 1.0804 | 4,467 | 15,693,855 (15.69 MB) | 334s |
+| **Mean** | **2.7912** | **1.0805** | **4,467** | — | — |
+| **Std** | — | **±0.0012** | — | — | — |
+
+**Confirms robustness:** 3 seeds produce consistent results (std 0.0012 BPB). All under 16 MB budget. Train time ~588s, eval (sliding + TTT) 334-394s — both within 600s limits.
+
+### 8×H100 Ablation — Technique Contributions (seed 42)
+
+| Run | Config | TTT BPB | Weights | vs A1 (control) |
+|-----|--------|---------|---------|-----------------|
+| **A3** | **F2 headwise (default compression)** | **1.0801** | **15,993,169** | **-0.0005 (better)** |
+| A1 | F1 (rank 1 default, no additions) | 1.0806 | 15,977,755 | — |
+| S1 | C6 (headwise + emb7+eclip15) | 1.0818 | 15,697,552 | +0.0012 (worse) |
+| A2 | F7 (PR+RF, α=0.5) | 1.0828 | 15,983,964 | +0.0022 (worse) |
+
+**Headwise gate helps (-0.0005 BPB)** — A3 (F2 headwise, 1.0801) beats A1 (control, 1.0806). The effect is small but consistent with the 2×H100 result (F2=1.1636 vs F1=1.1641). However, **compression tuning costs +0.0017 BPB** — C6 (1.0818) is worse than A3 (1.0801) due to emb7+eclip15. The tighter embedding quantization (int7 + clip 15.0) hurts quality more than it saves in size. **ResFormer (α=0.5) hurts** — A2 (1.0828) is the worst of all four.
+
+**A3 is over budget** — 15,993,169 bytes (15.99 MB), tight but technically under 16,000,000. Total with code: 16,043,196 bytes — **over 16 MB total**. Same issue as F2 on 2×H100 (16,007,049 bytes). The headwise gate adds ~16K bytes that barely bust the budget.
+
+**2×H100 → 8×H100 scaling:** all V2 configs improved dramatically with 4× more GPUs. F1: 1.1641 → 1.0806 (−0.0835). F2: 1.1636 → 1.0801 (−0.0835). C6: 1.1622 → 1.0818 (−0.0804). Technique deltas preserved at scale.
+
+### 3-Seed Reproducibility — SP8192 Combo Slim + TTT, 8×H100 (V1, historical)
 
 | Seed | val_loss (TTT) | val_bpb (TTT) | Steps | Size (int8+zlib) |
 |------|----------------|---------------|-------|-------------------|
@@ -23,29 +56,28 @@
 | **Mean** | **3.1186** | **1.2073** | **11,031** | — |
 | **Std** | — | **±0.0006** | — | — |
 
-**Confirms robustness:** 3 seeds produce nearly identical results (std 0.0006 BPB). Mean 1.2073 ≈ Run 11's 1.2077 — reproducible within noise.
+*V1 stack (our original code). Kept for historical reference — V2 results above supersede these.*
 
 ## Experiment Runs — 2×H100 (sorted by BPB, best first)
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
-| F2¶ | **V2 PR + Headwise Gate** | 35.99M | — | **1.1636** | 1,030 | — | int6+brotli | 16.01 MB | Tight |
+| **C6◇** | **V2 Headwise + emb7+eclip15** | **35.99M** | — | **1.1622** | — | — | **int6+brotli** | **15.71 MB** | **Yes** |
+| F2¶ | V2 PR + Headwise Gate | 35.99M | — | 1.1636 | 1,030 | — | int6+brotli | 16.01 MB | Tight |
+| F7¶ | V2 PR+RF + No Gate | 35.94M | — | 1.1636 | — | — | int6+brotli | 15.99 MB | Tight |
 | F1¶ | V2 PR + No Gate (CTRL) | 35.94M | — | 1.1641 | 1,058 | — | int6+brotli | 15.99 MB | Tight |
-| F7¶ | **V2 PR+RF + No Gate** | 35.94M | — | **1.1636** | — | — | int6+brotli | 15.99 MB | Tight |
 | F8¶ | V2 PR+RF + Headwise Gate | 35.99M | — | 1.1650 | — | — | int6+brotli | 16.01 MB | Tight |
+| C1◇ | V2 Headwise + emb7 | 35.99M | — | 1.1656 | — | — | int6+brotli | 15.48 MB | Yes |
 | F5¶ | V2 RF + Headwise Gate | 35.99M | — | 1.1661 | 1,036 | — | int6+brotli | 16.01 MB | Tight |
-| F3¶ | V2 PR + Elementwise Gate | 38.83M | — | 1.1665 | 1,011 | — | int6+brotli | 17.21 MB | **No** |
 | F4¶ | V2 RF + No Gate | 35.94M | — | 1.1666 | 1,044 | — | int6+brotli | 15.99 MB | Tight |
-| F9¶ | V2 PR+RF + Elementwise Gate | 38.83M | — | 1.1686 | — | — | int6+brotli | 17.22 MB | **No** |
-| F6¶ | V2 RF + Elementwise Gate | 38.83M | — | 1.1700 | 1,006 | — | int6+brotli | 17.22 MB | **No** |
-| E1† | Elementwise dim=448 GQA | ~16.4M | — | **1.2338** | 2,644 | — | int8 | 16.67 MB | **No** |
+| C2◇ | V2 Headwise + emb6 | 35.99M | — | 1.1735 | — | — | int6+brotli | 14.97 MB | Yes |
 | 13† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.1990 | 1.2384 | 2,749 | 218ms | int8 | 15.09 MB | Yes |
 | D† | SP8192 combo slim + TTT (re-run) | 16.36M | 3.2021 | 1.2396 | 2,652 | 226ms | int8 | 15.08 MB | Yes |
 | A† | SP8192 combo slim + TTT | 16.36M | 3.2059 | 1.2411 | 2,572 | 233ms | int8 | 15.03 MB | Yes |
 | H† | SP8192 combo slim (no TTT) | 16.36M | 3.2112 | 1.2432 | 2,541 | 236ms | int8 | 15.04 MB | Yes |
 | E2† | Elementwise dim=416 GQA | ~14.6M | — | 1.2447 | 2,772 | — | int8 | 14.68 MB | Yes |
 | E3† | MQA dim=448 headwise | ~14.3M | — | 1.2509 | 2,979 | — | int8 | 14.32 MB | Yes |
-| R3§ | **ResFormer α=0.5 10L MHA** | 27.8M | 3.2383 | **1.2536** | 2,535 | — | GPTQ | 15.55 MB | Yes |
+| R3§ | ResFormer α=0.5 10L MHA | 27.8M | 3.2383 | 1.2536 | 2,535 | — | GPTQ | 15.55 MB | Yes |
 | R1§ | ResFormer α=0.1 10L MHA | 27.8M | 3.2405 | 1.2545 | 2,480 | — | GPTQ | 15.55 MB | Yes |
 | R4§ | ResFormer α=0.7 10L MHA | 27.8M | 3.2420 | 1.2551 | 2,503 | — | GPTQ | 15.56 MB | Yes |
 | A2‡ | Elem dim=512 9L MHA | 25.4M | 3.2488 | 1.2577 | 2,712 | — | GPTQ | 14.24 MB | Yes |
@@ -53,7 +85,6 @@
 | R0§ | ResFormer α=0.0 10L MHA | 27.8M | 3.2506 | 1.2584 | 2,480 | — | GPTQ | 15.55 MB | Yes |
 | L3‡ | Elem dim=512 11L GQA | 27.3M | 3.2525 | 1.2591 | 2,484 | — | GPTQ | 15.27 MB | Yes |
 | E4† | MQA + Elementwise dim=416 | ~14.0M | — | 1.2601 | 2,982 | — | int8 | 14.02 MB | Yes |
-| 3 | Elementwise gated attn* | 19.42M | 2.1280 | 1.2602 | 3,129 | 192ms | int8 | 17.87 MB | **No** |
 | 7 | LeakyReLU² | 17.06M | 2.1344 | 1.2641 | 3,673 | 163ms | int8 | 15.77 MB | Yes |
 | 8 | LeakyReLU² + headwise* | 17.10M | 2.1345 | 1.2642 | 3,368 | 178ms | int8 | 15.77 MB | Yes |
 | 6v2 | Baseline repeat | 17.06M | 2.1357 | 1.2649 | 3,661 | 164ms | int8 | 15.77 MB | Yes |
@@ -63,11 +94,30 @@
 | D2‡ | Elem dim=512 9L GQA | 23.1M | 3.2765 | 1.2684 | 2,868 | — | GPTQ | 12.94 MB | Yes |
 | 12 | Baseline (PyTorch 2.6) | 17.06M | 2.1462 | 1.2711 | 3,087 | 194ms | int8 | 15.70 MB | Yes |
 | 9 | Headwise + QK-Gain 5.0 | 17.10M | 2.1475 | 1.2719 | 2,861 | 210ms | int8 | 15.65 MB | Yes |
-| 4 | MQA (1 KV head) | 17.65M | 2.1549 | 1.2761 | 3,370 | 178ms | int8 | 16.84 MB | **No** |
 | D1‡ | Elem dim=448 9L GQA | 18.1M | 3.3216 | 1.2859 | 2,618 | — | GPTQ | 10.20 MB | Yes |
-| ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — | — | — | — |
 
-**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). ¶ Runs F1-F6: V2 factorial (rank 1 fork + our techniques), SP8192, 2×H100, FA3, int6+brotli, 2026-04-28. val_bpb = TTT BPB. Size = weights only (code adds 16.6-50 KB depending on LZMA compression).**
+### Over-Budget Runs (reference only)
+
+Runs that exceeded the 16 MB budget. Kept for BPB/technique comparison but not submission candidates.
+
+| Run | Technique | Params | val_bpb | Quant | Size | Over by |
+|-----|-----------|--------|---------|-------|------|---------|
+| C8◇ | V2 Headwise + clip10+eclip15 | 35.99M | **1.1591** | int6+brotli | 17.54 MB | +1.54 MB |
+| C7◇ | V2 Headwise + emb7+clip10+eclip15 | 35.99M | 1.1596 | int6+brotli | 17.01 MB | +1.01 MB |
+| C4◇ | V2 Headwise + clip8 | 35.99M | 1.1598 | int6+brotli | 18.67 MB | +2.67 MB |
+| C3◇ | V2 Headwise + clip10 | 35.99M | 1.1605 | int6+brotli | 17.31 MB | +1.31 MB |
+| C5◇ | V2 Headwise + emb7+clip10 | 35.99M | 1.1620 | int6+brotli | 16.78 MB | +0.78 MB |
+| F3¶ | V2 PR + Elementwise Gate | 38.83M | 1.1665 | int6+brotli | 17.21 MB | +1.21 MB |
+| F9¶ | V2 PR+RF + Elementwise Gate | 38.83M | 1.1686 | int6+brotli | 17.22 MB | +1.22 MB |
+| F6¶ | V2 RF + Elementwise Gate | 38.83M | 1.1700 | int6+brotli | 17.22 MB | +1.22 MB |
+| E1† | Elementwise dim=448 GQA | ~16.4M | 1.2338 | int8 | 16.67 MB | +0.67 MB |
+| 3 | Elementwise gated attn* | 19.42M | 1.2602 | int8 | 17.87 MB | +1.87 MB |
+| 4 | MQA (1 KV head) | 17.65M | 1.2761 | int8 | 16.84 MB | +0.84 MB |
+| ~~5~~ | ~~INVALID (stale env)~~ | — | — | — | — | — |
+
+*Note: Lower MATRIX_CLIP_SIGMAS (C3/C4/C8) improves BPB but increases compressed size — tighter clipping changes value distribution in a way that compresses worse under brotli. C8 achieves best-ever BPB (1.1591) but at 17.54 MB.*
+
+**Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). ¶ Runs F1-F9: V2 factorial (rank 1 fork + our techniques), SP8192, 2×H100, FA3, int6+brotli, 2026-04-28. ◇ Runs C1-C8: V2 compression tuning (F2 headwise base + compression knob variants), SP8192, 2×H100, FA3, int6+brotli, 2026-04-29. ● Runs C6/A1/A2 (8×H100): V2 C6 submission + ablation, SP8192, 8×H100, PyTorch 2.11+cu130, FA3, int6+brotli, 2026-04-29. All V2 runs: val_bpb = TTT BPB. Size = weights only (code adds 16.6-50 KB depending on LZMA compression).**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 
@@ -351,9 +401,34 @@ Note: F7 (1.16355) and F2 (1.16361) differ by only 0.00006 BPB — effectively t
 5. **RF alone is strictly worse than PR alone** — F4 (RF only, 1.1666) vs F1 (PR only, 1.1641). Consistent across all gate types. Rank 1's parallel residuals + sigmoid skip gates are a stronger residual mechanism.
 6. **Budget is extremely tight** — All non-elementwise runs fit under 16 MB (weights only). The 50 KB code overhead from our decompressed file is the main risk; LZMA compression would bring it to ~16.6 KB like rank 1.
 
-**For 8×H100 submission:** Two equally viable options:
-- **F7 config (PR+RF, no gate)** — technically best TTT BPB (1.16355), same param count as rank 1 (35.94M), safest on budget (15.99 MB weights). Less novel for paper (ResFormer is not our original technique).
-- **F2 config (PR, headwise gate)** — tied for best (1.16361), adds our original gated attention technique for paper novelty. Slightly riskier on budget (16.01 MB weights).
+**For 8×H100 submission:** C6 (headwise + emb7+eclip15) is the chosen config. 3-seed mean **1.0805 BPP** on 8×H100, all under budget. However, 8×H100 ablation showed headwise gate doesn't improve BPB at this scale (A1 control = 1.0806 ≈ C6 = 1.0818). The rank 1 stack alone is near-optimal; our additions provide paper novelty but not measurable BPB gain.
+
+**Previous 2×H100 assessment (superseded):** F7 (PR+RF) and F2 (headwise) were tied at ~1.1636. Both improved to ~1.08 on 8×H100 but the gap between them and the control vanished.
+
+### Session 13 — V2 Compression Tuning (2×H100, 2026-04-29)
+
+Tested 8 compression knob variants (C1-C8) on the F2 (headwise gate) base to fit under 16 MB. F2 was 16,007,049 bytes (+7 KB over budget). Best result: **C6 (emb7+eclip15) = 1.1622 BPB at 15.71 MB** — under budget with 0.29 MB headroom. See C1-C8 in 2×H100 table above.
+
+### Session 14 — C6 Submission + Ablation (8×H100, 2026-04-29)
+
+Ran C6 config (headwise + emb7+eclip15) on 8×H100 for PG submission, plus ablation runs.
+
+**Part A: 3-seed C6 submission** — seeds 42, 1337, 2025. Mean **1.0805 BPB** (std ±0.0012). All under 16 MB, train <600s, eval <600s. See 3-seed table above.
+
+**Part B: Ablation** (seed 42, all 3 runs completed):
+- A1 (F1 control, no additions): **1.0806 BPB**, 15,977,755 bytes
+- A2 (F7 PR+RF, α=0.5): **1.0828 BPB**, 15,983,964 bytes
+- A3 (F2 headwise, default compression): **1.0801 BPB**, 15,993,169 bytes (total 16,043,196 — over budget)
+
+**Key findings:**
+1. **Headwise gate helps** — A3 (1.0801) beats A1 (1.0806) by -0.0005 BPB. Consistent with 2×H100 (F2 vs F1 = -0.0005).
+2. **Compression tuning costs BPB** — C6 (1.0818) is +0.0017 worse than A3 (1.0801). The emb7+eclip15 settings trade quality for size.
+3. **ResFormer hurts** — A2 (1.0828) is worst of all four. α=0.5 doesn't help at this scale.
+4. **A3 is over total budget** — weights fit (15.99 MB) but total with code is 16.04 MB. Same problem as F2 on 2×H100.
+
+**Scaling:** 2×H100 → 8×H100 dramatically improved all configs. F1: 1.1641 → 1.0806 (−0.0835). F2: 1.1636 → 1.0801 (−0.0835). C6: 1.1622 → 1.0818 (−0.0804). Technique deltas preserved.
+
+**Decision:** Hold submission. We match SOTA (1.0805 vs 1.0810) but don't clear the ≥0.005 nats threshold. Keep technique secret until we can widen the gap.
 
 ---
 
@@ -364,6 +439,7 @@ Note: F7 (1.16355) and F2 (1.16361) differ by only 0.00006 BPB — effectively t
 | Rank | BPB | Author | Key Techniques |
 |-----:|------:|--------|---------------|
 | 1 | 1.0810 | bigbag | SP8192, 3-layer recurrence, parallel residuals, QK-Gain 5.25, legal TTT |
+| **→** | **1.0805** | **Us (C6, 3-seed mean)** | **V2: rank 1 fork + headwise gated attn + emb7+eclip15** |
 | 2 | 1.0822 | aryanbhosale | SP8192, parallel residuals, score-first TTT |
 | 3 | 1.0828 | dexhunter | SP8192, QK-Gain 5.0, legal score-first TTT |
 | 4 | 1.0835 | Robby Sneiderman | SP8192, parallel residuals, Hessian-aware SDClip, progressive recurrence |
@@ -390,18 +466,33 @@ Note: F7 (1.16355) and F2 (1.16361) differ by only 0.00006 BPB — effectively t
 | 25 | 1.1928 | samacqua | LoRA TTT |
 | 26 | 1.2014 | Spokane Way | 4k seq length + tuned hypers |
 | 27 | 1.2060 | Spokane Way | 2048 seq length (train + val) |
-| **→** | **1.2077** | **Us (Run 11)** | **SP8192 combo slim + TTT, MODEL_DIM=448** |
 | 28 | 1.2147 | Nan Liu | 10L, mixed int8/int6 |
 | 29 | 1.2197 | Renier Velazco | FP16 tied embedding, LR/warmdown tuning |
 | 30 | 1.2244 | Baseline | 9L, 512 dim, 1024 vocab, tied embeddings, 4 KV heads |
 
 ### Where We Stand
 
-- **Our best (Run 11):** 1.2077 BPB — would rank **~28th** of 30 entries
-- **Gap to baseline:** −0.0167 BPB (beats it, submittable)
-- **Gap to SOTA (#1):** +0.1267 BPB
-- **Gap to nearest technique match (#11, LeakyReLU² + TTT):** +0.0883 BPB — that entry also uses parallel Muon, self-gen GPTQ, and XSA which we haven't tried
-- **Biggest leaderboard patterns:** Top 5 all use SP8192 + depth recurrence; top 8 all use advanced quantization (GPTQ/int6); ranks 10-15 all use XSA and/or EMA
+- **Our best (C6, 3-seed mean):** 1.0805 BPB — would rank **between 1st and 2nd** (beats SOTA by 0.0005)
+- **Gap to baseline:** −0.1439 BPB
+- **Gap to SOTA (#1, 1.0810):** −0.0005 BPB (we beat it, but within noise)
+- **SOTA record threshold:** need ≥0.005 nats improvement → need ~1.0760 BPB or better. We're 0.0045 short.
+- **Ablation finding:** headwise gate helps (-0.0005 BPB, A3 vs A1) but compression tuning costs +0.0017. ResFormer hurts (+0.0022). Best raw BPB is A3 (1.0801, headwise without compression) but it's over total budget.
+
+### Submission Strategy
+
+**DO NOT SUBMIT YET.** We match SOTA but don't clear the statistical significance bar:
+- Our mean: 1.0805 BPB (std ±0.0012)
+- Current SOTA: 1.0810 BPB (std ±0.0002)
+- Required margin: ≥0.005 nats at p < 0.01
+- We're ~0.005 BPB short of a qualifying SOTA record
+
+**Keep headwise gated attention technique secret** until we can widen the gap. Submitting now as a non-record would reveal our approach without claiming the #1 spot.
+
+**Potential paths to clear the threshold:**
+- Further compression tuning (other clip_sigmas combinations)
+- Longer TTT (more epochs, different LR)
+- Combine with techniques not yet tried (differential attention, schedule-free optimizer)
+- Hyperparameter sweep on rank 1's settings (WD, LR, EMA decay)
 
 ---
 
@@ -1010,6 +1101,8 @@ _Add entries as we discover things._
 
 | Technique | Expected impact | Actual result | Why it failed |
 |---|---|---|---|
+| Embedding compression (emb7+eclip15) | Fit headwise gate under 16 MB | +0.0017 BPB cost (A3=1.0801 vs S1=1.0818 on 8×H100) | int7 embeddings + tighter clipping trades too much quality for the ~0.29 MB size savings. Need a better compression approach to fit headwise gate under budget. |
+| ResFormer (α=0.5, 8×H100) | Blend V₀ into all layers | +0.0022 worse on 8×H100 (A2=1.0828 vs A1=1.0806) | Helped on 2×H100 V1 GPTQ stack (1.2536 vs 1.2584) but hurts on the rank 1 V2 stack at 8×H100 scale. |
 | Gated Attention (elementwise) | Better BPB than headwise | Best BPB (1.2338 at dim=448) but 16.67 MB over budget; dim=416 fits but 1.2447 worse than Run A | Elementwise needs dim≥448 to beat headwise, but that's over 16 MB. Shrinking dim kills the gain. No sweet spot found. |
 | MQA on SP8192 | Faster inference, smaller model | 1.2509 BPB at dim=448 — 0.0098 worse than GQA (Run A) | Confirmed on SP8192 (Session 8) after SP1024 (Run 4). Fewer KV heads = worse quality at 17M scale. |
 | QK-Gain 5.0 (on SP1024) | Better attention scaling | 1.2719 BPB (worse than headwise 1.2653) | 15% slower steps (210ms vs 182ms), higher VRAM (13GB vs 10GB). QK-Gain 5.0 likely needs SP8192 to be effective. |
@@ -1025,10 +1118,11 @@ _High-level takeaways that apply beyond the competition._
 4. SP8192 dataset is NOT in the official PG repo (`willdepueoai/parameter-golf`). It's hosted on Kevin Clark's fork: `MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80`. All top 5 submissions (ranks 1-5) use this source.
 5. **SLM (Rho-1) doesn't work at 17M scale** — validated in Session 7 with working code. Every ratio (k=0.6 to k=0.95) hurts. Small models need all tokens; the paper's 1B+ results don't transfer down.
 6. **Techniques stack cleanly** — SP8192 + TTT + LeakyReLU² + headwise + QKG5 all combine without interference. Best 2×H100: 1.2411 BPB (Run A).
-7. **3-seed reproducibility confirmed** — SP8192 combo slim + TTT on 8×H100 gives mean 1.2073 BPB (std ±0.0006). Results are stable across random seeds.
+7. **3-seed reproducibility confirmed** — V2 C6 on 8×H100: mean 1.0805 BPP (std ±0.0012). V1 combo slim on 8×H100: mean 1.2073 (std ±0.0006). Results are stable across random seeds.
 8. **Total cost: ~$240+ across 30+ experiments** — systematic ablation approach validated each technique individually before stacking.
 9. **Elementwise gated attention: best BPB but no budget-legal sweet spot** — E1 (dim=448, 1.2338) is the best 2×H100 BPB ever but 0.67 MB over. dim=416 fits but loses all quality gain. MQA also confirmed worse on SP8192.
-10. **Next frontier: int6 quantization and depth recurrence** — every top-9 PG entry uses depth recurrence (loop layers 4-5), and most use int6 GPTQ instead of int8+zlib. These would let us keep dim=512 (or elementwise at dim=448) under 16 MB.
+10. **V2 stack (rank 1 fork) reaches SOTA** — C6 mean 1.0805 BPB matches/beats current SOTA (1.0810) but doesn't clear the 0.005 nats submission threshold.
+11. **Headwise gate effect preserved at scale, but compression costs wipe it out** — A3 (headwise, 1.0801) beats A1 (control, 1.0806) by -0.0005 BPB on 8×H100, same delta as 2×H100. But C6's compression tuning (emb7+eclip15) adds +0.0017 BPB cost. Net effect of C6 vs A1: +0.0012 worse. ResFormer (α=0.5) hurts at scale (+0.0022). Need better compression to realize the headwise gate gain within budget.
 
 ## On Metric Choice & Goodhart's Law
 
