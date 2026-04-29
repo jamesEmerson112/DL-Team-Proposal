@@ -187,3 +187,24 @@ Active research + experimentation repository. Code modifications in `parameter-g
   - F1 = rank 1 control (no additions), F2-F3 = +gated attn, F4-F6 = ResFormer instead of PR, F7-F9 = both
   - Success criteria: any run beats our best 2×H100 BPB (1.2338)
 - [todo] Run V2 factorial on 2×H100 RunPod (~117 min, 9 runs × ~13 min each). Requires FA3 wheel install.
+
+### 2026-04-28 (Session 13)
+- [research] Read "Selective Attention Improves Transformer" (Leviathan et al., ICLR 2025, arXiv:2410.02703) — parameter-free masking matrix subtracted from attention logits. Assessed as medium-low priority for PG: zero params but not proven on leaderboard, GQA untested, competes with XSA already in V2 stack. Different from Rho-1 SLM (attention routing vs gradient filtering).
+- [feat] Created `docs/James_test/pg_rank1_slides.txt` — 3-slide presentation for team:
+  - Slide 1: Architecture Innovations (6 techniques: depth recurrence, parallel residuals, skip gates, LeakyReLU², LN scale, partial RoPE)
+  - Slide 2: Attention, Optimization & Compression (6 techniques: XSA, QK-Gain, MuonEq-R, EMA, GPTQ, TTT)
+  - Slide 3: Full Stack synthesis (5 compound chains, key numbers, our results)
+  - Each technique annotated with [Survey #N] or [Not in survey] cross-references
+  - 9 paper references with arxiv links
+- [edit] Updated `docs/parameter-golf/neurlps-paper-survey.md` — major refresh:
+  - Header: "Our best" updated from 1.2653 to 1.2077 (Run 11) + V2 best 1.1636 (F2), date to 2026-04-28
+  - ResFormer #20: updated to "Tested — CONTEXT-DEPENDENT" (works on simple stack, fails on rank 1 stack)
+  - MoEUT #7: updated to "Proven + Used by us (paper read)"
+  - Structured FFN #5: marked "paper read"
+  - Paper #13 (Variable Seq Length): marked "may not be helpful"
+  - Paper #16 (LR Warmup): marked "needs double-check"
+  - Leaderboard table: Gated Attention updated to 1.1636 (V2 F2), added "Full rank 1 stack" row
+  - EMA #25 and Depth Recurrence #7 in Top 8: marked "NOW IN USE"
+  - "Techniques Already in Use" section: expanded from 7 items to V1 stack (9 items) + V2 stack (+12 items) with [Survey #N] tags
+  - XSA and NorMuon struck through in "Techniques to Investigate" (now in use)
+  - Zero stale "1.2653" references remain
