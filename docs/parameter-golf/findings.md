@@ -13,11 +13,11 @@
 | 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | int8+zlib | 19.41 MB | **No** |
 | 11 | SP8192 combo slim + TTT | 16.36M | 3.1197 | 1.2077 | 11,073 | 54ms | int8+zlib | 15.35 MB | Yes |
 
-**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. Current SOTA: 1.0136 BPB (PR #1958, 2026-04-30).**
+**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. Current SOTA: 1.0611 BPB (codemath3000, 2026-04-30).**
 
 **Best submittable run: C6 (V2 Headwise + emb7+eclip15)** — 3-seed mean **1.0805 BPB**, **-0.1439 below PG baseline**, **-0.0005 below SOTA** (1.0810). 15.70 MB (under budget with 0.30 MB headroom). All 3 seeds under budget, train <600s, eval <600s.
 
-> **HOLD — DO NOT SUBMIT YET.** We match SOTA (1.0805 vs 1.0810) but don't clear the ≥0.005 nats margin required for a SOTA record. Keep headwise gated attention technique secret until we find enough improvement to clear the threshold. See "Submission Strategy" section below.
+> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. Legal best: C6 at 1.0805 BPB. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). Current legal SOTA: 1.0611 (codemath3000 PR #1855).
 
 ### 3-Seed Reproducibility — V2 C6 (Headwise + emb7+eclip15), 8×H100
 
@@ -63,6 +63,7 @@
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
 | **R4◆** | **V2 C6 + EMA=0.990 + PreQuantTTT** | **35.99M** | — | **1.0507** | — | — | **int6+brotli** | **15.70 MB** | **Yes** |
+| X1◆ | V2 C6 + Small Batch + EMA=0.990 + PreQuantTTT | 35.99M | — | 1.0591 | 3,193 | — | int6+brotli | 15.70 MB | Yes |
 | **B2▲** | **V2 C6 + Small Batch ga=1 (Paper #15) (James-experiment-2)** | **35.99M** | **2.9512** | **1.1419** | **3,349** | — | **int6+brotli** | **15.71 MB** | **Yes** |
 | B3▲ | V2 C6 + Small Batch ga=1 + beta2=0.99 (James-experiment-2) | 35.99M | 2.9503 | 1.1422 | 3,349 | — | int6+brotli | 15.71 MB | Yes |
 | R3◆ | V2 C6 + EMA=0.990 | 35.99M | — | 1.1505 | — | — | int6+brotli | 15.71 MB | Yes |
@@ -136,6 +137,8 @@ Runs that exceeded the 16 MB budget. Kept for BPB/technique comparison but not s
 **★ Runs P0-P5: Paper #16 (LR Warmup) + Paper #5 (Structured FFN) A/B tests, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. C6 base config (headwise + emb7+eclip15). LR warmup: all 3 fractions hurt monotonically (more warmup = worse). Structured FFN: dramatic param/size savings (23-25M, 13-14 MB) but BPB degrades by +0.04-0.05. Both techniques FAIL on V2 stack.**
 
 **▲ Runs B2-B3: Paper #15 (Small Batch Size), SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. GRAD_ACCUM_STEPS=1 + TRAIN_BATCH_TOKENS=196608 (4× smaller effective batch, 4× more optimizer updates). Best new technique: −0.015 BPB vs C6 baseline. 3,349 steps vs ~1,030 for C6. Beta2 scaling (0.95→0.99) makes no difference. Peri-LN (Paper #22) also tested — went to NaN immediately, output norms destabilize the rank 1 stack.**
+
+**◆ Runs R1-R4: Session 16 EMA deeper sweep + PreQuantTTT, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. EMA=0.990 new best (R3, 1.1505). PreQuantTTT (R4, 1.0507 TTT) is single biggest gain.**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 
@@ -509,13 +512,13 @@ Ran C6 config (headwise + emb7+eclip15) on 8×H100 for PG submission, plus ablat
 
 ---
 
-**Current SOTA:** 1.0136 BPB (PR #1958, okezue, 2026-04-30) — PreQuantTTT (21 epochs AdamW on full val set before quantization) + sliding-window stride-64 eval + per-group lrzip compression + LQER + SmearGate + CaseOps SP8192. Built on PR #1855 stack. Previous SOTA: 1.0810 (bigbag, 2026-04-09).
+**Current SOTA:** 1.0611 BPB (codemath3000, 2026-04-30) — BOS-Fixed SmearGate + LQER + SparseAttnGate + per-group lrzip + 9 greedy HP overrides. Previous SOTA: 1.0136 (okezue, PR #1958, invalidated/superseded).
 
 ### Official Leaderboard (as of 2026-04-30)
 
 | Rank | BPB | Author | Key Techniques |
 |-----:|------:|--------|---------------|
-| 1 | 1.0136 | okezue (PR #1958) | PreQuantTTT 21ep + sliding-window stride-64 + LQER + SmearGate + CaseOps SP8192 |
+| 1 | 1.0611 | codemath3000 | BOS-Fixed SmearGate + LQER + SparseAttnGate + per-group lrzip + 9 greedy HP overrides |
 | 2 | 1.0586 | andrewbaggio1 (#1953) | Long-context 2560 + no_qv TTT mask + QK_GAIN 5.25 |
 | 3 | 1.0594 | alertcat (#1945) | AWQ-lite + Asymmetric Logit Rescale |
 | 4 | 1.0600 | Christopher-Lee-McClendon (#1950) | #1934 reproduction (GPTQ_RESERVE=5.5) |
@@ -533,7 +536,7 @@ Ran C6 config (headwise + emb7+eclip15) on 8×H100 for PG submission, plus ablat
 
 - **Our best (C6, 3-seed mean):** 1.0805 BPB — now **behind new SOTA** by 0.0669
 - **Gap to baseline:** −0.1439 BPB
-- **Gap to new SOTA (#1, 1.0136):** +0.0669 BPB (far behind)
+- **Gap to new SOTA (#1, 1.0611):** +0.0194 BPB
 - **Gap to old SOTA (bigbag, 1.0810):** −0.0005 BPB (we beat it)
 - **Key new techniques we're missing:** ~~PreQuantTTT (~0.06 BPB)~~, sliding-window eval (~0.01 BPB), LQER, per-group lrzip compression
 - **Ablation finding:** headwise gate helps (-0.0005 BPB, A3 vs A1) but compression tuning costs +0.0017. ResFormer hurts (+0.0022).
@@ -1156,6 +1159,9 @@ _Add entries as we discover things._
 | **Score-First TTT** | -0.0021 BPB (1.2432→1.2411) | Eval-time fine-tuning: adapt model to validation distribution. Legal under PG rules (score before update). Source: @dexhunter (PG competition). |
 | Gated Attention (headwise) | 1.2653 (compressed), fits 16 MB | Sigmoid gate after SDPA lets model suppress uninformative heads per token. Nearly free: +37K params, no speed penalty. Original technique by James Vo. |
 | LeakyReLU² | -0.0008 BPB vs baseline (1.2641 vs 1.2649) | Free activation swap — no extra params, no speed cost. Used by PG ranks 10-11. |
+| **Small Batch (Paper #15)** | **-0.015 BPB** (1.1419 vs 1.1572) | ga=1 + TRAIN_BATCH_TOKENS÷4 gives 4× more optimizer updates in same wall clock. 3,349 steps vs ~1,030. Beta2 scaling irrelevant. Paper: "Small Batch Size Training" (NeurIPS 2024). |
+| **EMA=0.990** | **-0.0117 BPB** vs C6 (1.1505 vs 1.1622) | More aggressive weight averaging helps at short training durations. Nearly 2× the gain of 0.995. Sweet spot shifts lower with fewer training steps. |
+| **PreQuantTTT** | **-0.1435 BPB** (1.1591→1.0156 post-PQ) | 21 epochs AdamW on val before GPTQ. Freezes blocks 0-1 + embeddings, cosine LR 5e-4→5e-5. Single biggest technique gain in entire project. Source: okezue (PG PR #1958). |
 
 ## Techniques That Didn't Work
 
@@ -1167,6 +1173,9 @@ _Add entries as we discover things._
 | MQA on SP8192 | Faster inference, smaller model | 1.2509 BPB at dim=448 — 0.0098 worse than GQA (Run A) | Confirmed on SP8192 (Session 8) after SP1024 (Run 4). Fewer KV heads = worse quality at 17M scale. |
 | QK-Gain 5.0 (on SP1024) | Better attention scaling | 1.2719 BPB (worse than headwise 1.2653) | 15% slower steps (210ms vs 182ms), higher VRAM (13GB vs 10GB). QK-Gain 5.0 likely needs SP8192 to be effective. |
 | SLM / Rho-1 (all ratios) | Better per-step learning by filtering easy tokens | k=0.6: +0.155 BPB, k=0.8: +0.024, k=0.95: +0.002 — ALL worse than no-SLM | At 17M params, model needs every gradient signal. Rho-1 paper tested at 1B+; doesn't transfer down. Simple loss-threshold (Option A) too crude without reference model. Paper: "Not All Tokens Are What You Need" (NeurIPS 2024). |
+| LR Warmup (Paper #16) | Better training stability | 2%: +0.0024, 5%: +0.0042, 10%: +0.0066 — ALL worse, monotonically | Rank 1 correctly skips warmup. With MuonEq-R optimizer and existing momentum warmup, LR warmup adds redundant ramp. Paper: "On the Role of LR Warmup" (ICML 2025). |
+| Structured FFN (Paper #5) | Reduce MLP params via low-rank + block-diagonal | r=0.5/b=4: +0.043 BPB, r=0.75/b=8: +0.050 BPB — saves 30-56% params but quality collapses | Paper tested at 125M+; structure constraints too lossy at 36M scale where every param counts. Paper: "Structured FFN" (NeurIPS 2024). |
+| Peri-LN (Paper #22) | Better norm placement | Immediate NaN — training collapses | Output norms on attn+MLP conflict with existing attn_scale/mlp_scale + depth-dependent ln_scale_factor. Destabilizes the rank 1 stack. Paper: "Peri-LN" (ICML 2025). |
 
 ## Key Insights
 
@@ -1187,6 +1196,8 @@ _High-level takeaways that apply beyond the competition._
 13. **LR warmup hurts (Paper #16)** — tested 2%, 5%, 10% warmup fractions. All worse, monotonically: +0.0024, +0.0042, +0.0066 BPB. Confirms rank 1's design choice to skip LR warmup.
 14. **Structured FFN fails at V2 scale (Paper #5)** — low-rank + block-diagonal FFN saves 30-56% params but +0.04-0.05 BPB degradation. Paper tested at 125M+; doesn't transfer to 36M.
 15. **Headwise gate effect preserved at scale, but compression costs wipe it out** — A3 (headwise, 1.0801) beats A1 (control, 1.0806) by -0.0005 BPB on 8×H100, same delta as 2×H100. But C6's compression tuning (emb7+eclip15) adds +0.0017 BPB cost. Net effect of C6 vs A1: +0.0012 worse. ResFormer (α=0.5) hurts at scale (+0.0022). Need better compression to realize the headwise gate gain within budget.
+16. **EMA=0.990 is optimal** — deeper sweep (Session 16) confirms more aggressive weight averaging helps at this training duration. Nearly 2× the gain of 0.995 (−0.0117 vs −0.0060 below C6). Sweet spot shifts lower with fewer training steps.
+17. **PreQuantTTT is transformative** — 21 epochs AdamW on val before GPTQ gives −0.1435 BPB (1.1591→1.0156 post-PQ). On 2×H100, R4 post-quant TTT (1.0507) beats our 8×H100 C6 (1.0805). Single biggest technique gain in entire project. Projected 8×H100: ~0.97-1.00 BPB.
 
 ## On Metric Choice & Goodhart's Law
 
