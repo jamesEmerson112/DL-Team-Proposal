@@ -72,11 +72,12 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
-| **N1◆** | **V2 C6 + EMA=0.990 + Small Batch** | **35.99M** | **2.9395** | **1.1368** | **1,853** | — | **int6+brotli** | **15.71 MB** | **Yes** |
+| **N1◆** | **V2 C6 + EMA=0.990 + Small Batch** | **35.99M** | **2.9365** | **1.1368** | **4,221** | — | **int6+brotli** | **15.70 MB** | **Yes** |
+| S1▼ | V2 N1 + Cross-Seq Attn (eval-only, Paper #29) | 35.99M | 2.9397 | 1.1380† | 4,219 | — | int6+brotli | 15.71 MB | Yes |
 | **B2▲** | **V2 C6 + Small Batch ga=1 (Paper #15) (James-experiment-2)** | **35.99M** | **2.9512** | **1.1419** | **3,349** | — | **int6+brotli** | **15.71 MB** | **Yes** |
 | B3▲ | V2 C6 + Small Batch ga=1 + beta2=0.99 (James-experiment-2) | 35.99M | 2.9503 | 1.1422 | 3,349 | — | int6+brotli | 15.71 MB | Yes |
 | R3◆ | V2 C6 + EMA=0.990 | 35.99M | — | 1.1505 | — | — | int6+brotli | 15.71 MB | Yes |
-| N2◆ | V2 C6 + EMA=0.990 + Small Batch + DiffAttn (Paper #19) | 35.99M | 2.9722 | 1.1506 | 1,444 | — | int6+brotli | 15.71 MB | Yes |
+| N2◆ | V2 C6 + EMA=0.990 + Small Batch + DiffAttn (Paper #19) | 35.99M | 2.9722 | 1.1506 | 3,292 | — | int6+brotli | 15.71 MB | Yes |
 | R2◆ | V2 C6 + EMA=0.993 | 35.99M | — | 1.1526 | — | — | int6+brotli | 15.71 MB | Yes |
 | R1◆ | V2 C6 + EMA=0.995 + WD=0.10 | 35.99M | — | 1.1559 | — | — | int6+brotli | 15.71 MB | Yes |
 | **E1●** | **V2 C6 + EMA=0.995** | **35.99M** | — | **1.1562** | — | — | **int6+brotli** | **15.71 MB** | **Yes** |
@@ -170,7 +171,9 @@ Teammate experiments on a different base stack (rank 4 + MIN_LR=0.10, vanilla SP
 
 **◆ Runs R1-R4: Session 16 EMA deeper sweep + PreQuantTTT, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. EMA=0.990 new best (R3, 1.1505). PreQuantTTT (R4, 1.0507 TTT) is single biggest gain.**
 
-**◆ Runs N1-N2: Session 17 DiffAttn A/B test, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. N1 (C6+EMA=0.990+SmallBatch) = 1.1368 — new best legal 2×H100 result. EMA+SmallBatch stack: −0.0254 vs C6. N2 (N1+DiffAttn, Paper #19) = 1.1506 — FAILS, +0.0138 regression due to 22% fewer steps (1,444 vs 1,853) from 2× FA3 calls. Throughput penalty outweighs attention quality at 36M scale.**
+**◆ Runs N1-N2: Session 17 DiffAttn A/B test, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. N1 (C6+EMA=0.990+SmallBatch) = 1.1368 (4,221 steps) — new best legal 2×H100 result. EMA+SmallBatch stack: −0.0254 vs C6. N2 (N1+DiffAttn, Paper #19) = 1.1506 (3,292 steps) — FAILS, +0.0138 regression due to 22% fewer steps from 2× FA3 calls. Throughput penalty outweighs attention quality at 36M scale.**
+
+**▼ Run S1: Session 18 Cross-Seq Attn, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. Same training as N1 (cross-seq is eval-only). Sliding window BPB = 1.1380 (matches N1). †Cross-seq eval hung — sequential window processing (batch_seqs=1) too slow (~3+ hours). TTT BPB not reached. Needs batched implementation.**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 

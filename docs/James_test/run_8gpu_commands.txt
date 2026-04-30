@@ -87,42 +87,43 @@ cd ..
 # Expected: ~13 min training + ~8-10 min eval (LoRA TTT uses more eval time)
 # Compare: P1a SGD TTT = 1.0769, SOTA = 1.0611
 
-# --- Step 10a: Download CaseOps files from PR #1855 ---
-# These are NOT in our repo. Download from openai/parameter-golf.
+# --- Step 10a: Download pre-tokenized CaseOps shards from HuggingFace ---
+# Uses romeerp/parameter-golf-caseops-v1 — pre-tokenized binary shards ready to go.
+# No need for raw JSONL or prepare_caseops_data.py.
 
 cd parameter-golf
 
-# Option A: Using gh CLI (if authenticated on pod)
-gh pr checkout 1855 --repo openai/parameter-golf --detach
-SOTA_DIR="records/track_10min_16mb/2026-04-27_SP8192_LQER_SparseGate_BOSSmearFix_9HpStack_1.0611"
-cp "$SOTA_DIR/lossless_caps.py" ./lossless_caps.py
-cp "$SOTA_DIR/prepare_caseops_data.py" ./prepare_caseops_data.py
-mkdir -p data/tokenizers
-cp "$SOTA_DIR/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model" \
-   data/tokenizers/
-git checkout -   # go back to our branch
+# The 1-line patch to cached_challenge_fineweb.py is already committed:
+#   line 19: `if name.startswith("sp"):` (was `if name.startswith("sp") and name[2:].isdigit():`)
+# This lets the sp8192_lossless_caps_caseops_v1_reserved variant pass through.
 
-# Option B: Using curl (no gh auth needed, only works if PR is merged to main)
-BASE="https://raw.githubusercontent.com/openai/parameter-golf/refs/heads/main"
-SOTA="records/track_10min_16mb/2026-04-27_SP8192_LQER_SparseGate_BOSSmearFix_9HpStack_1.0611"
-curl -L "$BASE/$SOTA/lossless_caps.py" -o lossless_caps.py
-curl -L "$BASE/$SOTA/prepare_caseops_data.py" -o prepare_caseops_data.py
-mkdir -p data/tokenizers
-curl -L "$BASE/$SOTA/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model" \
-     -o data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+# Download CaseOps shards (~5-10 min)
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
+MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
+python3 data/cached_challenge_fineweb.py \
+  --variant sp8192_lossless_caps_caseops_v1_reserved \
+  --train-shards 80
 
-# Verify files downloaded:
-ls -la lossless_caps.py prepare_caseops_data.py
-ls -la data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+# --- Step 10b: Symlink CaseOps data to expected sp8192 paths ---
+# train_gpt.py expects data at data/datasets/fineweb10B_sp8192/
+# CaseOps shards land in data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/
 
-# --- Step 10b: Reprocess FineWeb shards with CaseOps tokenizer ---
-# ~30-60 min. Creates new train+val shards with lossless capitalization encoding.
-# Skip this step to run without CaseOps (LoRA TTT still works with regular sp8192).
+# Back up regular sp8192 if it exists
+mv data/datasets/fineweb10B_sp8192 data/datasets/fineweb10B_sp8192_regular 2>/dev/null || true
+mv data/tokenizers/fineweb_8192_bpe.model data/tokenizers/fineweb_8192_bpe.model.regular 2>/dev/null || true
 
-python prepare_caseops_data.py \
-  --docs data/datasets/fineweb10B_sp8192 \
-  --out data/datasets/fineweb10B_sp8192_caseops \
-  --sp data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+# Symlink CaseOps data to expected paths
+ln -s fineweb10B_sp8192_lossless_caps_caseops_v1_reserved data/datasets/fineweb10B_sp8192
+
+# Check what tokenizer model name the CaseOps repo uses, then symlink it
+ls data/tokenizers/
+# Adjust filename below if different:
+ln -s fineweb_8192_lossless_caps_caseops_v1_reserved_bpe.model data/tokenizers/fineweb_8192_bpe.model
+
+# Verify symlinks resolve
+ls data/datasets/fineweb10B_sp8192/fineweb_train_000000.bin  # should exist
+ls data/tokenizers/fineweb_8192_bpe.model                     # should exist (or symlink)
 
 # --- Step 10c: Run P2 ---
 cd ..  # back to DL-Team-Proposal root
