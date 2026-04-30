@@ -1735,10 +1735,10 @@ class GPT(nn.Module):
             return topk_losses.mean()
 
         if Hyperparameters.fused_softcap_ce:
-            return fused_softcapped_cross_entropy(
-                logits_proj,
-                target_ids,
-                self.logit_softcap,
+            logits = self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
+            return F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)).float(),
+                target_ids.reshape(-1),
                 reduction="mean",
             )
         logits = self.softcap_logits(logits_proj)

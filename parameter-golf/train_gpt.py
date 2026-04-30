@@ -89,7 +89,7 @@ def apply_rotary_emb(x,cos,sin,rope_dims=0):
 	if rope_dims>0 and rope_dims<x.size(-1):x_rope,x_pass=x[...,:rope_dims],x[...,rope_dims:];half=rope_dims//2;x1,x2=x_rope[...,:half],x_rope[...,half:];x_rope=torch.cat((x1*cos+x2*sin,x1*-sin+x2*cos),dim=-1);return torch.cat((x_rope,x_pass),dim=-1)
 	half=x.size(-1)//2;x1,x2=x[...,:half],x[...,half:];return torch.cat((x1*cos+x2*sin,x1*-sin+x2*cos),dim=-1)
 class CausalSelfAttention(nn.Module):
-	def __init__(self,dim,num_heads,num_kv_heads,rope_base,qk_gain_init,train_seq_len,gated_attn='none',diff_attn_enabled=False,hybridnorm_v=False,layer_idx=0):
+	kv_dim=self.num_kv_heads*self.head_dim;self.c_q=CastedLinear(dim,dim+self.gate_dim,bias=False);self.c_k=CastedLinear(dim,kv_dim,bias=False);self.c_v=CastedLinear(dim,kv_dim,bias=False);self.proj=CastedLinear(dim,dim,bias=False);self.proj._zero_init=True;self.q_gain=nn.Parameter(torch.full((num_heads,),qk_gain_init,dtype=torch.float32));self.sparse_gate=nn.Parameter(torch.full((num_heads,),sparse_attn_gate_init,dtype=torch.float32))if sparse_attn_gate else None;self.rope_dims=0;self.rotary=Rotary(self.head_dim,base=rope_base,train_seq_len=train_seq_len);self.use_xsa=False
 		super().__init__()
 		if dim%num_heads!=0:raise ValueError('model_dim must be divisible by num_heads')
 		if num_heads%num_kv_heads!=0:raise ValueError('num_heads must be divisible by num_kv_heads')
@@ -111,6 +111,8 @@ class CausalSelfAttention(nn.Module):
 		cache_v=(vr_alpha>0 and v0 is None);v_before_repeat=v
 		if v0 is not None and vr_alpha>0:v=(1-vr_alpha)*v+vr_alpha*v0
 		q=F.rms_norm(q,(q.size(-1),));k=F.rms_norm(k,(k.size(-1),));cos,sin=self.rotary(seqlen,x.device,q.dtype);q=apply_rotary_emb(q,cos,sin,self.rope_dims);k=apply_rotary_emb(k,cos,sin,self.rope_dims);q=q*self.q_gain.to(dtype=q.dtype)[None,None,:,None]
+        if self.sparse_gate is not None:sparse_gate=torch.sigmoid(self.sparse_gate).to(dtype=q.dtype)[None,None,:,None]
+            q=q*sparse_gate
 		if self.diff_attn_enabled:half=self.head_dim//2;q1,q2=q[...,:half],q[...,half:];k1,k2=k[...,:half],k[...,half:];y1=flash_attn_3_func(q1,k1,v,causal=True);y2=flash_attn_3_func(q2,k2,v,causal=True);lam=torch.sigmoid(self.lambda_param.to(dtype=y1.dtype))[None,None,:,None];y=y1-lam*y2
 		else:y=flash_attn_3_func(q,k,v,causal=True)
 		if self.use_xsa:y=self._xsa_efficient(y,v)
