@@ -1,0 +1,76 @@
+# =============================================================================
+# Session 18: Cross-Seq Attn + Schedule-Free on 2×H100 (2 runs)
+# =============================================================================
+#
+# S1: N1 + Cross-Sequence Attention (eval-only, proven PG leaderboard)
+# S2: N1 + Schedule-Free Optimizer (Paper #23, NeurIPS 2024 Oral)
+#
+# MATES (#12) deprioritized — high effort, risky overhead at 10-min wall clock.
+#
+# Estimated time: ~26 min total
+# Estimated cost: ~$1 for 2×H100 pod
+
+# =============================================================================
+# STEP 0: SETUP (RunPod 2×H100)
+# =============================================================================
+
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment-3
+git pull origin James-experiment-3
+
+# === Install deps ===
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli schedulefree
+pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Install FlashAttention-3
+python3 -c "import torch; print(f'CUDA: {torch.version.cuda}')"
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# === Download SP8192 dataset (~5-10 min) ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# === Preflight check ===
+python3 -c "
+from flash_attn_interface import flash_attn_func as fa3
+import brotli, schedulefree, torch
+print(f'PyTorch: {torch.__version__}')
+print(f'CUDA: {torch.version.cuda}')
+print(f'GPUs: {torch.cuda.device_count()}')
+print(f'FA3: OK')
+print(f'brotli: OK')
+print(f'schedulefree: OK')
+assert torch.cuda.device_count() >= 2, f'Need 2 GPUs, found {torch.cuda.device_count()}'
+print('Preflight PASSED')
+"
+
+cd ..
+
+# =============================================================================
+# STEP 1: RUN ALL EXPERIMENTS
+# =============================================================================
+
+cd parameter-golf
+bash ../runs/run_v2_session18_2gpu.sh
+cd ..
+
+# =============================================================================
+# EXPECTED RESULTS
+# =============================================================================
+#
+# S1 (Cross-Seq Attn): Same training as N1 (1.1368), but cross-seq eval should
+#     give lower BPB by using context from previous sequences. Check quantized_crossseq line.
+#     Training BPB unchanged. Eval-only improvement.
+#
+# S2 (Schedule-Free): Replaces AdamW for tok+scalar optimizers (~4.2M params).
+#     Muon (31.8M params) unchanged. Effect may be small since Muon dominates.
+#     If better: eliminates need for warmdown tuning.
+#
+# Compare against N1 baseline: 1.1368 BPB
