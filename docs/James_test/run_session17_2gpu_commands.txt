@@ -1,13 +1,14 @@
 # =============================================================================
-# Session 17: DiffAttn + HybridNorm A/B Tests on 2×H100 (3 runs)
+# Session 17: DiffAttn A/B Test on 2×H100 (2 runs)
 # =============================================================================
 #
 # N1: C6 + EMA=0.990 + Small Batch (legal combo baseline)
 # N2: N1 + Differential Attention (Paper #19)
-# N3: N1 + HybridNorm V-norm (Paper #21)
 #
-# Estimated time: ~45 min total (3 runs × ~13 min each)
-# Estimated cost: ~$1.50 for 2×H100 pod (~1 hour)
+# HybridNorm (N3) CUT — teammate Ashray tested on rank 4 stack, +0.011 regression.
+#
+# Estimated time: ~26 min total (2 runs × ~13 min each)
+# Estimated cost: ~$1 for 2×H100 pod (~30 min)
 
 # =============================================================================
 # STEP 0: SETUP (RunPod 2×H100)
@@ -56,7 +57,7 @@ cd ..  # back to DL-Team-Proposal root
 # =============================================================================
 # STEP 1: RUN ALL EXPERIMENTS
 # =============================================================================
-# Runs N1→N2→N3 sequentially, prints summary at end.
+# Runs N1→N2 sequentially, prints summary at end.
 
 cd parameter-golf
 bash ../runs/run_v2_session17_2gpu.sh
@@ -68,11 +69,8 @@ cd ..
 #
 # N1 (combo baseline): ~1.135 BPB (EMA=0.990 gives -0.012, SmallBatch gives -0.015)
 # N2 (DiffAttn): ? — two-softmax-subtract, 2× attn compute, may lose steps
-# N3 (HybridNorm V): ? — V-norm is cheap, risk: NaN if incompatible with stack
 #
 # Compare against:
 #   R3 (EMA=0.990 only):     1.1505 BPB
 #   B2 (SmallBatch only):    1.1419 BPB
 #   C6 (no tuning):          1.1622 BPB
-#
-# If N2 or N3 beats N1, run N4 = stack both on top of N1.

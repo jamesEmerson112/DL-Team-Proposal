@@ -1,15 +1,15 @@
 #!/bin/bash
 # =============================================================================
-# Session 17: DiffAttn + HybridNorm A/B Tests on 2×H100 (3-4 runs)
+# Session 17: DiffAttn A/B Test on 2×H100 (2 runs)
 #
 # N1: C6 + EMA=0.990 + Small Batch (legal combo baseline)
 # N2: N1 + Differential Attention (Paper #19, ICLR 2025 Oral)
-# N3: N1 + HybridNorm V-norm (Paper #21, NeurIPS 2025)
-# N4: N1 + best of N2/N3 (if both help, stack them)
+#
+# HybridNorm (N3) CUT — teammate Ashray tested on rank 4, +0.011 regression.
 #
 # Base: C6 (headwise + emb7 + eclip15) + EMA=0.990 + Small Batch (ga=1)
 # Usage: bash runs/run_v2_session17_2gpu.sh
-# Estimated time: ~45 min (3 runs × ~13 min + overhead)
+# Estimated time: ~26 min (2 runs × ~13 min)
 # =============================================================================
 
 set -euo pipefail
@@ -64,18 +64,6 @@ export SEED=42
 run_one "v2_n2_diffattn" "N2: N1 + Differential Attention (two-softmax-subtract)"
 
 # =============================================================================
-# N3: HybridNorm V-norm (Paper #21)
-# =============================================================================
-echo ""
-echo "########################################"
-echo "  N3: HybridNorm V-norm"
-echo "########################################"
-
-source "$REPO_ROOT/runs/configs/v2_n3_hybridnorm.env"
-export SEED=42
-run_one "v2_n3_hybridnorm" "N3: N1 + HybridNorm V-norm (RMSNorm on V projections)"
-
-# =============================================================================
 # RESULTS SUMMARY
 # =============================================================================
 echo ""
@@ -89,7 +77,6 @@ import os, re
 runs = [
     ('N1', 'v2_n1_combo', 'C6+EMA0.990+SmallBatch'),
     ('N2', 'v2_n2_diffattn', 'N1+DiffAttn'),
-    ('N3', 'v2_n3_hybridnorm', 'N1+HybridNorm_V'),
 ]
 
 print(f\"{'Run':<5} {'Config':<30} {'TTT BPB':<12} {'Steps':<8}\")
