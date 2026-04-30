@@ -208,3 +208,36 @@ Active research + experimentation repository. Code modifications in `parameter-g
   - "Techniques Already in Use" section: expanded from 7 items to V1 stack (9 items) + V2 stack (+12 items) with [Survey #N] tags
   - XSA and NorMuon struck through in "Techniques to Investigate" (now in use)
   - Zero stale "1.2653" references remain
+
+### 2026-04-29 (Session 15)
+- [run] Executed 19-run C6 fine-tuning sweep on 2×H100 (`run_v2_finetune_2gpu.sh`):
+  - TTT Grid (T1-T9): 9 runs, {3,5,7} epochs × {0.003, 0.005, 0.01} LR — none beat baseline. T8 (e7, lr0.005) = 1.1624, +0.0002 vs C6. Default (e3, lr0.005) is near-optimal.
+  - QK-Gain (Q1-Q3): 5.5/5.75/6.0 — all worse. Rank 1 default (5.25) optimal.
+  - **EMA (E1-E3): E1 (decay=0.995) = 1.1562, -0.0060 vs C6 — BIG WIN.** E2 (0.997) = 1.1690 worse. E3 (0.999) = 1.3475 catastrophic.
+  - WD (W1-W3): W2 (wd=0.10) = 1.1619, -0.0003 marginal.
+  - Warmdown (D1): frac=0.80 = 1.1645, worse than default 0.72.
+- [finding] **EMA=0.995 is the single best hyperparameter finding** — more aggressive weight averaging helps at this training duration
+- [finding] EMA sensitivity extreme: 0.995 (best) → 0.9965 (default) → 0.997 (worse) → 0.999 (catastrophic)
+- [finding] Projected 8×H100 with EMA=0.995: ~1.0745 BPB (from C6 1.0805 - 0.006)
+- [edit] Updated findings.md with full 19-run table, added E1 and W2 to 2×H100 leaderboard
+- [edit] Budget check added: train_gpt_v2.py = 50 KB, total submission ~15.74 MB, under budget
+
+### 2026-04-30 (Session 16)
+- [research] Checked PG leaderboard PRs — **SOTA exploded to 1.0136 BPB** (PR #1958, okezue)
+  - Key new techniques: PreQuantTTT (21ep AdamW on val before GPTQ, ~0.06 BPB), sliding-window stride-64 eval (~0.01 BPB), per-group lrzip compression, LQER, CaseOps tokenizer
+  - Multiple PRs in 1.05-1.07 range. Our C6 (1.0805) now ranks ~9th-10th.
+- [edit] Updated findings.md leaderboard: new SOTA 1.0136, added top 8 new PRs, updated submission strategy
+- [edit] Updated neurlps-paper-survey.md: marked papers #19, #21, #22, #23, #12 as "paper read"
+- [feat] Created `docs/James_notes/TODO.txt` — added Priority 1 (HybridNorm, Schedule-Free, DiffAttn) and Priority 2 (Peri-LN, Structured FFN, MATES) training techniques
+- [feat] Implemented PreQuantTTT in `parameter-golf/train_gpt_v2.py`:
+  - New `prequant_ttt()` function: 21 epochs AdamW, freezes blocks 0-1 + embeddings, cosine LR 5e-4→5e-5, federated avg across GPUs
+  - New env vars: `PREQUANT_TTT_ENABLED`, `PREQUANT_TTT_EPOCHS`, `PREQUANT_TTT_LR`, `PREQUANT_TTT_LR_END`
+  - Wired into `train_and_eval()` between post-EMA eval and GPTQ serialization
+- [feat] Implemented per-group compression (`COMPRESSOR=pergroup`): pure Python lzma/brotli hybrid, picks smaller per 64KB chunk. No system deps.
+- [feat] Created `runs/run_v2_session16_2gpu.sh` — unified 6-run Phase 1-3 script:
+  - Phase 1: EMA deeper sweep (0.995+WD0.10, 0.993, 0.990) — auto-picks best
+  - Phase 2: PreQuantTTT with best EMA
+  - Phase 3: Per-group compression (emb7 + emb8 variants)
+- [feat] Updated `runs/configs/v2_base.env` with PreQuantTTT defaults (disabled by default)
+- [edit] Updated `docs/James_test/run_finetune_2gpu_commands.txt` for Session 16
+- [todo] Run Session 16 on 2×H100, then 8×H100 3-seed if results are competitive (~1.015 projected)
