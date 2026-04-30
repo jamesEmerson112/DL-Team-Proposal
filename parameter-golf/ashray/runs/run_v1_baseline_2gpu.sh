@@ -117,9 +117,9 @@ steps_stop   = find(r"stopping_early: wallclock_cap .*?step:(\d+)")
 steps_final  = find(r"^step:(\d+)/\d+ train_loss", )
 last_step    = steps_stop if steps_stop != "?" else (re.findall(r"^step:(\d+)/", text, re.MULTILINE) or ["?"])[-1]
 
-pre_ema_bpb  = find(r"pre-quantization post-ema val_loss:[\d.]+ val_bpb:([\d.]+)")
-quant_bpb    = find(r"^quantized val_loss:[\d.]+ val_bpb:([\d.]+)")
-ttt_bpb      = find(r"quantized_ttt val_loss:[\d.]+ val_bpb:([\d.]+)")
+pre_ema_bpb  = find(r"diagnostic pre-quantization post-ema val_loss:[\d.]+ val_bpb:([\d.]+)")
+quant_bpb    = find(r"^diagnostic quantized val_loss:[\d.]+ val_bpb:([\d.]+)")
+ttt_bpb      = find(r"quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)")
 
 total_bytes  = find(r"Total submission size.*?: (\d+) bytes")
 train_time   = find(r"stopping_early: wallclock_cap train_time:(\d+)")

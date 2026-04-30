@@ -106,9 +106,9 @@ def find(pat, default="?"):
 params       = find(r"model_params:(\d+)")
 last_step    = (re.findall(r"^step:(\d+)/", text, re.MULTILINE) or ["?"])[-1]
 
-pre_ema_bpb  = find(r"pre-quantization post-ema val_loss:[\d.]+ val_bpb:([\d.]+)")
-quant_bpb    = find(r"^quantized val_loss:[\d.]+ val_bpb:([\d.]+)")
-ttt_bpb      = find(r"quantized_ttt val_loss:[\d.]+ val_bpb:([\d.]+)")
+pre_ema_bpb  = find(r"diagnostic pre-quantization post-ema val_loss:[\d.]+ val_bpb:([\d.]+)")
+quant_bpb    = find(r"^diagnostic quantized val_loss:[\d.]+ val_bpb:([\d.]+)")
+ttt_bpb      = find(r"quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)")
 
 total_bytes  = find(r"Total submission size.*?: (\d+) bytes")
 train_time   = find(r"stopping_early: wallclock_cap train_time:(\d+)")
@@ -131,7 +131,7 @@ if total_bytes != "?":
 v1_log = "records/v1_baseline_seed${SEED}_${NGPUS}gpu/train.log"
 if os.path.exists(v1_log):
     v1_text = open(v1_log).read()
-    v1_ttt = re.search(r"quantized_ttt val_loss:[\d.]+ val_bpb:([\d.]+)", v1_text)
+    v1_ttt = re.search(r"quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)", v1_text)
     if v1_ttt and ttt_bpb != "?":
         delta = float(ttt_bpb) - float(v1_ttt.group(1))
         print()
@@ -141,7 +141,7 @@ if os.path.exists(v1_log):
 v2_log = "records/v2_peri_ln_seed${SEED}_${NGPUS}gpu/train.log"
 if os.path.exists(v2_log):
     v2_text = open(v2_log).read()
-    v2_ttt = re.search(r"quantized_ttt val_loss:[\d.]+ val_bpb:([\d.]+)", v2_text)
+    v2_ttt = re.search(r"quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)", v2_text)
     if v2_ttt and ttt_bpb != "?":
         delta = float(ttt_bpb) - float(v2_ttt.group(1))
         print(f"  v2 post-TTT:    {v2_ttt.group(1)}")

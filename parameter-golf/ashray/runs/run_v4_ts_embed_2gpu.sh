@@ -1,31 +1,29 @@
 #!/bin/bash
 #
-# V2 — baseline + Peri-LN on 2×H100, 1 seed.
-# Measures the delta from adding F.rms_norm on each sublayer output.
+# V4 — baseline + Universal-Transformer timestep embed on depth recurrence.
+# Measures the delta vs v1 from giving looped layers a per-iteration signal.
 #
 # Usage (from ashray/ root):
-#   bash runs/run_v2_peri_ln_2gpu.sh
+#   bash runs/run_v4_ts_embed_2gpu.sh
 # Override seed:
-#   SEED=0 bash runs/run_v2_peri_ln_2gpu.sh
-#
-# Compare against records/v1_baseline_seed${SEED}_2gpu/ for the delta.
+#   SEED=0 bash runs/run_v4_ts_embed_2gpu.sh
 
 set -uo pipefail
 
 NGPUS="${NGPUS:-2}"
 SEED="${SEED:-42}"
-RUN_NAME="v2_peri_ln_seed${SEED}_${NGPUS}gpu"
+RUN_NAME="v4_ts_embed_seed${SEED}_${NGPUS}gpu"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ASHRAY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PG_DIR="$ASHRAY_ROOT/parameter-golf"
 BASE_CONFIG="$ASHRAY_ROOT/runs/configs/v1_base.env"
-OVERLAY_CONFIG="$ASHRAY_ROOT/runs/configs/v2_peri_ln.env"
-TRAIN_SCRIPT="train_v2.py"
+OVERLAY_CONFIG="$ASHRAY_ROOT/runs/configs/v4_ts_embed.env"
+TRAIN_SCRIPT="train_v4.py"
 RECORDS_DIR="$PG_DIR/records/$RUN_NAME"
 
 echo "============================================"
-echo "  V2 — Peri-LN — ${NGPUS}×GPU, seed ${SEED}"
+echo "  V4 — TS-embed — ${NGPUS}×GPU, seed ${SEED}"
 echo "  $(date)"
 echo "============================================"
 
@@ -63,12 +61,15 @@ mkdir -p "$RECORDS_DIR"
 
 echo ""
 echo "Config summary:"
-echo "  train_script:    $TRAIN_SCRIPT"
-echo "  run_id:          $RUN_ID"
-echo "  seed:            $SEED"
-echo "  gpus:            $NGPUS"
-echo "  records_dir:     $RECORDS_DIR"
-echo "  peri_ln_enabled: $PERI_LN_ENABLED   <-- the delta vs v1 baseline"
+echo "  train_script:     $TRAIN_SCRIPT"
+echo "  run_id:           $RUN_ID"
+echo "  seed:             $SEED"
+echo "  gpus:             $NGPUS"
+echo "  records_dir:      $RECORDS_DIR"
+echo "  TS_EMBED_ENABLED: $TS_EMBED_ENABLED   <-- delta vs v1"
+echo "  NUM_LOOPS:        $NUM_LOOPS"
+echo "  LOOP_START:       $LOOP_START"
+echo "  LOOP_END:         $LOOP_END"
 echo ""
 
 cd "$PG_DIR"
@@ -119,29 +120,27 @@ print(f"  train_time_ms:  {train_time}")
 print(f"  peak_vram_MiB:  {vram}")
 print(f"  pre-TTT BPB:    {pre_ema_bpb}  (post-EMA, pre-quant)")
 print(f"  quant BPB:      {quant_bpb}   (post-quant, pre-TTT)")
-print(f"  post-TTT BPB:   {ttt_bpb}  <-- headline number")
+print(f"  post-TTT BPB:   {ttt_bpb}  <-- headline")
 print(f"  artifact bytes: {total_bytes}" + (f"  ({int(total_bytes)/1e6:.2f} MB)" if total_bytes != "?" else ""))
 if total_bytes != "?":
     ok = "YES" if int(total_bytes) <= 16_000_000 else "NO"
     headroom = (16_000_000 - int(total_bytes)) / 1e6
     print(f"  under 16MB:     {ok}  ({headroom:+.2f} MB headroom)")
 
-# Attempt to compute delta vs v1 baseline log if it exists.
 v1_log = "records/v1_baseline_seed${SEED}_${NGPUS}gpu/train.log"
 if os.path.exists(v1_log):
     v1_text = open(v1_log).read()
     v1_ttt = re.search(r"quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)", v1_text)
+    v1_pre = re.search(r"diagnostic pre-quantization post-ema val_loss:[\d.]+ val_bpb:([\d.]+)", v1_text)
+    if v1_pre and pre_ema_bpb != "?":
+        d = float(pre_ema_bpb) - float(v1_pre.group(1))
+        print()
+        print(f"  v1 pre-TTT:     {v1_pre.group(1)}")
+        print(f"  Δ pre-TTT:      {d:+.5f}  ({'BETTER' if d < 0 else 'WORSE' if d > 0 else 'TIE'})")
     if v1_ttt and ttt_bpb != "?":
-        delta = float(ttt_bpb) - float(v1_ttt.group(1))
-        print()
+        d = float(ttt_bpb) - float(v1_ttt.group(1))
         print(f"  v1 post-TTT:    {v1_ttt.group(1)}")
-        print(f"  delta (v2-v1):  {delta:+.5f}  ({'BETTER' if delta < 0 else 'WORSE' if delta > 0 else 'TIE'})")
-    else:
-        print()
-        print(f"  (couldn't extract v1 TTT BPB from {v1_log} for delta)")
-else:
-    print()
-    print(f"  (no v1 baseline log at {v1_log} — run v1 first for delta comparison)")
+        print(f"  Δ post-TTT:     {d:+.5f}  ({'BETTER' if d < 0 else 'WORSE' if d > 0 else 'TIE'})")
 PY
 
 echo ""
