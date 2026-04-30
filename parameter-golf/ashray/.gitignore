@@ -1,0 +1,19 @@
+# Datasets (regenerable via runs/configs/SETUP.md)
+parameter-golf/data/fineweb10B_raw/
+parameter-golf/data/datasets/
+
+# Run artifacts
+parameter-golf/records/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
