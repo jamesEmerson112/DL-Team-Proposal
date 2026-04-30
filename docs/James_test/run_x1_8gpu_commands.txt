@@ -1,0 +1,94 @@
+# -----------------------------------------------------------------------
+# X1 Full Stack: Small Batch + EMA=0.990 + PreQuantTTT — 8×H100 3-Seed
+#
+# PR submission run. 3 seeds for reproducibility.
+# 2×H100 result: 1.0591 TTT BPB. Projected 8×H100: ~0.98-1.00 BPB.
+# Estimated time: ~45 min (3 seeds x ~15 min each)
+# -----------------------------------------------------------------------
+
+# === 1. Setup ===
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment
+
+# === 2. Install deps ===
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli
+pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Install Flash Attention 3 (required for V2, H100 only)
+pip install flash-attn --no-build-isolation
+
+# === 3. Download SP8192 dataset (skip if already done) ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+cd ..
+
+# === 4. Preflight ===
+python3 -c "
+import sys
+sys.path.insert(0, 'parameter-golf')
+with open('parameter-golf/train_gpt_v2.py') as f:
+    code = f.read()
+checks = {
+    'GRAD_ACCUM_STEPS env var': 'GRAD_ACCUM_STEPS' in code,
+    'PREQUANT_TTT_ENABLED': 'PREQUANT_TTT_ENABLED' in code,
+    'prequant_ttt function': 'prequant_ttt' in code,
+    'weights_only=False fix': 'weights_only=False' in code,
+    'EMA_DECAY env var': 'EMA_DECAY' in code,
+    'GATED_ATTN env var': 'GATED_ATTN' in code,
+}
+all_ok = all(checks.values())
+for name, ok in checks.items():
+    print(f'  {\"✓\" if ok else \"✗\"} {name}')
+print(f'\nPreflight: {\"PASS\" if all_ok else \"FAIL\"} ({sum(checks.values())}/{len(checks)} checks)')
+if not all_ok:
+    print('ERROR: Missing code. Did you pull the latest James-experiment branch?')
+    sys.exit(1)
+"
+
+# === 5. Run 3-Seed on 8×H100 (~45 min) ===
+#
+# Config: C6 base + Small Batch (ga=1, batch÷4) + EMA=0.990 + PreQuantTTT 21ep
+# Each GPU processes 196608/8 = 24,576 tokens/step
+#
+# PASS: All 3 seeds under 16 MB, TTT BPB < 1.05
+# GREAT: TTT BPB < 1.00 (beats SOTA)
+#
+bash runs/run_v2_x1_8gpu.sh
+
+# === 6. Post-Run: Prepare PR Submission ===
+#
+# The script prints a submission.json snippet. Copy it.
+# Then:
+#
+# cd parameter-golf
+# git remote add upstream https://github.com/openai/parameter-golf.git  # if needed
+# git fetch upstream
+# git checkout main && git merge upstream/main && git push origin main
+#
+# git checkout -b submission/fullstack-headwise-gate
+# mkdir -p records/track_10min_16mb/2026-04-30_SP8192_FullStack_HeadwiseGate_PreQuantTTT
+#
+# # Copy files into submission folder:
+# cp train_gpt_v2.py records/.../train_gpt.py
+# cp logs/x1_fullstack_seed42.txt records/.../train_seed42.log
+# cp logs/x1_fullstack_seed1337.txt records/.../train_seed1337.log
+# cp logs/x1_fullstack_seed2025.txt records/.../train_seed2025.log
+# # Copy pg_submission_readme.md → records/.../README.md (fill in X.XXXX values)
+# # Copy submission.json → records/.../submission.json (fill in values)
+# # Create requirements.txt: sentencepiece, brotli, numpy
+#
+# git add records/track_10min_16mb/2026-04-30_SP8192_FullStack_HeadwiseGate_PreQuantTTT/
+# git commit -m "Add record: SP8192 Full Stack + Headwise Gated Attention + PreQuantTTT"
+# git push origin submission/fullstack-headwise-gate
+#
+# gh pr create --repo openai/parameter-golf \
+#   --title "SP8192 Full Stack + Headwise Gated Attention + PreQuantTTT (val_bpb=X.XXXX)" \
+#   --body "$(cat records/.../README.md)"
