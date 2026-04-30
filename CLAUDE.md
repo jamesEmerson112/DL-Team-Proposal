@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 30+ experiments completed, best submittable result: **1.2077 BPB** (Run 11).
+This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 35+ experiments completed, best submittable result: **1.0805 BPB** (C6, 3-seed mean on 8×H100 — matches SOTA).
 
 ## Repository Structure
 
@@ -26,8 +26,9 @@ Active research + experimentation repository. Code modifications in `parameter-g
 
 - **Parameter Golf** is the active competition target: 16 MB artifact, 10 min on 8×H100, scored by FineWeb validation BPB
 - 30+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
-- Best submittable result: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT) — beats PG baseline (1.2244)
-- 3-seed reproducibility confirmed: mean 1.2073 ±0.0006 BPB
+- Best submittable result: **1.0805 BPB** (C6, V2 headwise + emb7+eclip15, 3-seed mean on 8×H100) — matches SOTA (1.0810)
+- 3-seed reproducibility confirmed: C6 mean 1.0805 ±0.0012 BPB (V1 Run 11: 1.2073 ±0.0006)
+- **DO NOT SUBMIT YET** — matches SOTA but doesn't clear ≥0.005 nats threshold for SOTA record. Keep technique secret.
 - nanochat is the official successor to nanoGPT (released Oct 2025) — studied for technique porting but not used directly
 
 ## Context History
@@ -208,3 +209,25 @@ Active research + experimentation repository. Code modifications in `parameter-g
   - "Techniques Already in Use" section: expanded from 7 items to V1 stack (9 items) + V2 stack (+12 items) with [Survey #N] tags
   - XSA and NorMuon struck through in "Techniques to Investigate" (now in use)
   - Zero stale "1.2653" references remain
+
+### 2026-04-29 (Session 14)
+- [run] Executed C6 submission + ablation on 8×H100 RunPod (PyTorch 2.11, CUDA 13.0, FA3)
+- [run] Part A: 3-seed C6 (headwise + emb7+eclip15) — seeds 42/1337/2025
+  - S1 (seed 42): **1.0818 BPB**, 15,697,552 bytes, 4,469 steps, eval 394s
+  - S2 (seed 1337): **1.0794 BPB**, 15,694,065 bytes, 4,465 steps, eval 335s
+  - S3 (seed 2025): **1.0804 BPB**, 15,693,855 bytes, 4,467 steps, eval 334s
+  - Mean: **1.0805 BPB** (std ±0.0012) — matches SOTA (1.0810)
+- [run] Part B: Ablation (seed 42, all 3 completed)
+  - A1 (F1 control): **1.0806 BPB**, 15,977,755 bytes
+  - A2 (F7 PR+RF α=0.5): **1.0828 BPB**, 15,983,964 bytes
+  - A3 (F2 headwise, default compression): **1.0801 BPB**, 15,993,169 bytes (total 16,043,196 — over budget)
+- [finding] **Headwise gate helps at 8×H100** — A3 (1.0801) beats A1 (1.0806) by −0.0005 BPB, consistent with 2×H100.
+- [finding] **Compression tuning costs +0.0017 BPB** — C6 (1.0818) vs A3 (1.0801). emb7+eclip15 trades quality for size.
+- [finding] **ResFormer hurts at 8×H100 scale** — A2 (α=0.5) 1.0828, worst of the four.
+- [finding] **We match SOTA** (1.0805 vs 1.0810) but don't clear ≥0.005 nats threshold for SOTA record.
+- [decision] **DO NOT SUBMIT** — keep headwise gated attention technique secret until gap is widened.
+- [feat] Created `runs/run_v2_c6_8gpu.sh` — automated 6-run script (3 seeds + 3 ablations)
+- [feat] Rewrote `docs/James_test/run_8gpu_commands.txt` — setup + calls run script
+- [feat] Created `docs/James_test/pg_submission_guide.txt` — full PR submission process guide
+- [feat] Created `docs/James_test/submission.json` — filled template with 8×H100 results
+- [edit] Updated `docs/parameter-golf/findings.md` — added V2 C6 8×H100 results, 3-seed table, ablation table, submission strategy, Session 14 log, updated leaderboard position and key insights

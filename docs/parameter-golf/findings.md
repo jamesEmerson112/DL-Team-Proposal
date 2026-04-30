@@ -428,6 +428,8 @@ Ran C6 config (headwise + emb7+eclip15) on 8×H100 for PG submission, plus ablat
 
 **Scaling:** 2×H100 → 8×H100 dramatically improved all configs. F1: 1.1641 → 1.0806 (−0.0835). F2: 1.1636 → 1.0801 (−0.0835). C6: 1.1622 → 1.0818 (−0.0804). Technique deltas preserved.
 
+**Budget check:** `train_gpt_v2.py` is 50,519 bytes (~49 KB). C6 weights ~15,695,000 bytes (~15.70 MB). Total submission: ~15,745,519 bytes (~15.74 MB) — **under 16 MB with ~256 KB headroom**. Code size is not a blocker. LZMA compression (like rank 1) would shrink code to ~17 KB but is unnecessary given the margin.
+
 **Decision:** Hold submission. We match SOTA (1.0805 vs 1.0810) but don't clear the ≥0.005 nats threshold. Keep technique secret until we can widen the gap.
 
 ---
