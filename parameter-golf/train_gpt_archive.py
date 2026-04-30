@@ -436,7 +436,8 @@ def eval_val_score_first_ttt(
                     y_batch[i, :wlen] = chunk_tok[1:]
 
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    logits = base_model.forward_logits(x_batch)
+                    logits_proj = base_model.forward_logits(x_batch)
+                    logits = base_model.softcap_logits(logits_proj)
 
                 nll = F.cross_entropy(
                     logits.reshape(-1, logits.size(-1)).float(),
@@ -1606,16 +1607,6 @@ class Block(nn.Module):
         if v_cached is not None:
             return x, v_cached
         return x
-    def fused_softcapped_cross_entropy(
-        logits_proj: Tensor,
-        targets: Tensor,
-        softcap: float,
-        reduction: str = "mean",
-    ) -> Tensor:
-        logits = softcap * torch.tanh(logits_proj / softcap)
-        logits = logits.reshape(-1, logits.size(-1))
-        targets = targets.reshape(-1)
-        return F.cross_entropy(logits.float(), targets, reduction=reduction)
 
 class GPT(nn.Module):
     def __init__(
