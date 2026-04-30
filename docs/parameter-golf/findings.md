@@ -62,6 +62,8 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
+| **B2▲** | **V2 C6 + Small Batch ga=1 (Paper #15)** | **35.99M** | **2.9512** | **1.1419** | **3,349** | — | **int6+brotli** | **15.71 MB** | **Yes** |
+| B3▲ | V2 C6 + Small Batch ga=1 + beta2=0.99 | 35.99M | 2.9503 | 1.1422 | 3,349 | — | int6+brotli | 15.71 MB | Yes |
 | **C6◇** | **V2 Headwise + emb7+eclip15** | **35.99M** | — | **1.1622** | — | — | **int6+brotli** | **15.71 MB** | **Yes** |
 | F2¶ | V2 PR + Headwise Gate | 35.99M | — | 1.1636 | 1,030 | — | int6+brotli | 16.01 MB | Tight |
 | F7¶ | V2 PR+RF + No Gate | 35.94M | — | 1.1636 | — | — | int6+brotli | 15.99 MB | Tight |
@@ -118,6 +120,8 @@ Runs that exceeded the 16 MB budget. Kept for BPB/technique comparison but not s
 *Note: Lower MATRIX_CLIP_SIGMAS (C3/C4/C8) improves BPB but increases compressed size — tighter clipping changes value distribution in a way that compresses worse under brotli. C8 achieves best-ever BPB (1.1591) but at 17.54 MB.*
 
 **Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). ¶ Runs F1-F9: V2 factorial (rank 1 fork + our techniques), SP8192, 2×H100, FA3, int6+brotli, 2026-04-28. ◇ Runs C1-C8: V2 compression tuning (F2 headwise base + compression knob variants), SP8192, 2×H100, FA3, int6+brotli, 2026-04-29. ● Runs C6/A1/A2 (8×H100): V2 C6 submission + ablation, SP8192, 8×H100, PyTorch 2.11+cu130, FA3, int6+brotli, 2026-04-29. All V2 runs: val_bpb = TTT BPB. Size = weights only (code adds 16.6-50 KB depending on LZMA compression).**
+
+**▲ Runs B2-B3: Paper #15 (Small Batch Size), SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. GRAD_ACCUM_STEPS=1 + TRAIN_BATCH_TOKENS=196608 (4× smaller effective batch, 4× more optimizer updates). Best new technique: −0.015 BPB vs C6 baseline. 3,349 steps vs ~1,030 for C6. Beta2 scaling (0.95→0.99) makes no difference. Peri-LN (Paper #22) also tested — went to NaN immediately, output norms destabilize the rank 1 stack.**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 
@@ -1122,7 +1126,11 @@ _High-level takeaways that apply beyond the competition._
 8. **Total cost: ~$240+ across 30+ experiments** — systematic ablation approach validated each technique individually before stacking.
 9. **Elementwise gated attention: best BPB but no budget-legal sweet spot** — E1 (dim=448, 1.2338) is the best 2×H100 BPB ever but 0.67 MB over. dim=416 fits but loses all quality gain. MQA also confirmed worse on SP8192.
 10. **V2 stack (rank 1 fork) reaches SOTA** — C6 mean 1.0805 BPB matches/beats current SOTA (1.0810) but doesn't clear the 0.005 nats submission threshold.
-11. **Headwise gate effect preserved at scale, but compression costs wipe it out** — A3 (headwise, 1.0801) beats A1 (control, 1.0806) by -0.0005 BPB on 8×H100, same delta as 2×H100. But C6's compression tuning (emb7+eclip15) adds +0.0017 BPB cost. Net effect of C6 vs A1: +0.0012 worse. ResFormer (α=0.5) hurts at scale (+0.0022). Need better compression to realize the headwise gate gain within budget.
+11. **Small batch size is the biggest V2 technique win (Paper #15)** — removing gradient accumulation (ga=4→1) and reducing TRAIN_BATCH_TOKENS by 4× gives 3.3× more optimizer updates in the same wall clock. Result: −0.015 BPB on 2×H100 (1.1419 vs 1.1572). Beta2 scaling (0.95→0.99) makes no difference. New best 2×H100 BPB ever.
+12. **Peri-LN (Paper #22) kills training** — output norms on attn+MLP cause immediate NaN. Conflicts with existing attn_scale/mlp_scale + depth-dependent ln_scale_factor. Do not use on rank 1 stack.
+13. **LR warmup hurts (Paper #16)** — 2%, 5%, 10% warmup all worse, monotonically. Rank 1 was right to skip it.
+14. **Structured FFN fails at V2 scale (Paper #5)** — 30-56% fewer MLP params but +0.04-0.05 BPB degradation. Paper tested at 125M+; doesn't transfer to 36M.
+15. **Headwise gate effect preserved at scale, but compression costs wipe it out** — A3 (headwise, 1.0801) beats A1 (control, 1.0806) by -0.0005 BPB on 8×H100, same delta as 2×H100. But C6's compression tuning (emb7+eclip15) adds +0.0017 BPB cost. Net effect of C6 vs A1: +0.0012 worse. ResFormer (α=0.5) hurts at scale (+0.0022). Need better compression to realize the headwise gate gain within budget.
 
 ## On Metric Choice & Goodhart's Law
 
