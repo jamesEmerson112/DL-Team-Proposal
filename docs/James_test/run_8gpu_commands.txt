@@ -1,15 +1,18 @@
 # =============================================================================
-# C6 Submission Run on 8xH100 (6 runs)
+# P3: PR #1851 Fork + Our Novel Contributions (8xH100, single run)
 # =============================================================================
 #
-# C6 = rank 1 fork + headwise gated attention + tighter embedding compression
-# 2xH100 result: 1.1622 TTT BPB, 15.71 MB (under 16 MB budget)
+# Strategy: Fork the SOTA base (PR #1851, 1.0613 BPB) and add our 3 findings:
+#   1. Headwise Gated Attention (GATED_ATTN_ENABLED=1)
+#   2. EMA = 0.990 (was 0.9965, our finding: -0.012 BPB)
+#   3. Small Batch (ga=1, 196K tokens, our finding: -0.015 BPB)
 #
-# Part A: 3-seed C6 submission (S1-S3) for PG submission.json
-# Part B: 3 ablation runs (A1-A3) for paper data collection
+# PR #1851 base includes: CaseOps tokenizer, phased TTT, LQER, SmearGate,
+#   sparse attn gate, brotli compression — all already in train_gpt.py
 #
-# Estimated time: ~80 min total (6 runs x ~13 min each)
-# Estimated cost: ~$6-8 for 8xH100 pod (~1.5 hours)
+# Projected: 1.0613 - 0.012 - 0.015 ~ 1.034 BPB
+# Estimated time: ~15-20 min (training + phased TTT eval)
+# Estimated cost: ~$2-3 for 8xH100 pod
 
 # =============================================================================
 # STEP 0: SETUP (RunPod 8xH100)
@@ -29,18 +32,63 @@ pip install huggingface_hub brotli
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
-# Install FlashAttention-3 (required for V2 — NOT the same as flash-attn pip package which is FA2)
-# Pre-built wheel for H100 (sm90). Check CUDA version first:
+# Install FlashAttention-3 (required — NOT the same as flash-attn pip package)
 python3 -c "import torch; print(f'CUDA: {torch.version.cuda}')"
 # CUDA 13.0 wheel:
 pip install --no-cache-dir \
   "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
 
-# === Download SP8192 dataset (~5-10 min) ===
-rm -f data/manifest.json
-MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+# =============================================================================
+# STEP 1: Download CaseOps dataset (~5-10 min)
+# =============================================================================
+# PR #1851 uses CaseOps tokenizer. Download pre-tokenized shards from HF.
 
-# === Preflight check ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
+MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
+python3 data/cached_challenge_fineweb.py \
+  --variant sp8192_lossless_caps_caseops_v1_reserved \
+  --train-shards 80
+
+# =============================================================================
+# STEP 2: Verify CaseOps data is where PR #1851 expects it
+# =============================================================================
+# PR #1851 looks for data at this nested path when CASEOPS_ENABLED=1:
+#   data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/
+#   data/datasets/fineweb10B_sp8192_caseops/datasets/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+
+# First, check where the data actually landed:
+find data/ -name "fineweb_train_000000.bin" -type f
+find data/ -name "*caseops*.model" -type f
+
+# If the paths DON'T match PR #1851's expected paths, create the directory
+# structure and symlink. For example, if data landed in
+# data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/:
+
+mkdir -p data/datasets/fineweb10B_sp8192_caseops/datasets/datasets
+mkdir -p data/datasets/fineweb10B_sp8192_caseops/datasets/tokenizers
+
+# Symlink data shards (adjust source path to wherever your shards landed)
+ln -s $(pwd)/data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved \
+      data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
+
+# Symlink tokenizer (adjust source path)
+ln -s $(pwd)/data/tokenizers/fineweb_8192_lossless_caps_caseops_v1_reserved_bpe.model \
+      data/datasets/fineweb10B_sp8192_caseops/datasets/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+
+# Verify the expected paths resolve:
+ls data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_train_000000.bin
+ls data/datasets/fineweb10B_sp8192_caseops/datasets/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+
+# ALTERNATIVE: Skip symlinks, just override paths directly with env vars.
+# Find the actual paths first, then export before running:
+#   export DATA_PATH=/path/to/your/caseops/shards
+#   export TOKENIZER_PATH=/path/to/your/caseops/tokenizer.model
+
+# =============================================================================
+# STEP 3: Preflight check
+# =============================================================================
+
 python3 -c "
 from flash_attn_interface import flash_attn_func as fa3
 import brotli
@@ -54,106 +102,46 @@ assert torch.cuda.device_count() >= 8, f'Need 8 GPUs, found {torch.cuda.device_c
 print('Preflight PASSED')
 "
 
+# =============================================================================
+# STEP 4: Run P3
+# =============================================================================
+
 cd ..  # back to DL-Team-Proposal root
-
-# =============================================================================
-# PART A + B: Run all 6 experiments (3-seed C6 + 3 ablations)
-# =============================================================================
-# This script runs everything sequentially and prints summaries at the end.
-# You can walk away and check results when it finishes (~80 min).
-
 cd parameter-golf
-bash ../runs/run_v2_c6_8gpu.sh
-cd ..
+bash ../runs/run_p3_1851_8gpu.sh
+
+# =============================================================================
+# STEP 5: Results check
+# =============================================================================
+# Look for these in the log:
+#   gated_attn_enabled: True     (confirms headwise gate active)
+#   ema_decay: 0.99              (confirms EMA=0.990)
+#   grad_accum_steps: 1          (confirms small batch)
+#   train_batch_tokens: 196608   (confirms reduced batch)
+#   caseops_enabled: True        (confirms CaseOps tokenizer)
+#
+# Key result lines:
+#   pre-quantization post-ema val_bpb:X.XXXX
+#   quantized val_bpb:X.XXXX
+#   quantized_sliding_window val_bpb:X.XXXX   (or phased TTT result)
+#
+# Compare to:
+#   PR #1851 base:  1.0613 BPB  (our additions should beat this)
+#   PR #1855:       1.0611 BPB
+#   C6 (ours):      1.0805 BPB
+#   SOTA:           1.0136 BPB
 
 # =============================================================================
 # VERIFICATION CHECKLIST
 # =============================================================================
-# [ ] All 6 logs exist in parameter-golf/logs/
-# [ ] S1-S3: mean TTT BPB computed + submission.json snippet printed
-# [ ] S1-S3 weights: each < 16,000,000 bytes (under 16 MB budget)
-# [ ] Ablation: A1 (control) > S1 (C6) in BPB confirms headwise gate helps on 8xH100
-# [ ] Copy logs to DL-Team-Proposal/docs/ for safekeeping before terminating pod
-
-# =============================================================================
-# STEP 10: P2 — LoRA TTT + CaseOps (8xH100, single run)
-# =============================================================================
-#
-# P2 = P1a base (C6 + 6 SOTA hparam overrides) + LoRA TTT + CaseOps tokenizer
-# P1a result: 1.0769 TTT BPB (over budget at 16.35 MB)
-# LoRA TTT replaces SGD TTT — per-document adaptation, Adam optimizer, rank 8
-# CaseOps = lossless capitalization encoding on sp8192 tokenizer (~0.001-0.002 BPB)
-#
-# Expected: ~13 min training + ~8-10 min eval (LoRA TTT uses more eval time)
-# Compare: P1a SGD TTT = 1.0769, SOTA = 1.0611
-
-# --- Step 10a: Download pre-tokenized CaseOps shards from HuggingFace ---
-# Uses romeerp/parameter-golf-caseops-v1 — pre-tokenized binary shards ready to go.
-# No need for raw JSONL or prepare_caseops_data.py.
-
-cd parameter-golf
-
-# The 1-line patch to cached_challenge_fineweb.py is already committed:
-#   line 19: `if name.startswith("sp"):` (was `if name.startswith("sp") and name[2:].isdigit():`)
-# This lets the sp8192_lossless_caps_caseops_v1_reserved variant pass through.
-
-# Download CaseOps shards (~5-10 min)
-rm -f data/manifest.json
-MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
-MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
-python3 data/cached_challenge_fineweb.py \
-  --variant sp8192_lossless_caps_caseops_v1_reserved \
-  --train-shards 80
-
-# --- Step 10b: Symlink CaseOps data to expected sp8192 paths ---
-# train_gpt.py expects data at data/datasets/fineweb10B_sp8192/
-# CaseOps shards land in data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/
-
-# Back up regular sp8192 if it exists
-mv data/datasets/fineweb10B_sp8192 data/datasets/fineweb10B_sp8192_regular 2>/dev/null || true
-mv data/tokenizers/fineweb_8192_bpe.model data/tokenizers/fineweb_8192_bpe.model.regular 2>/dev/null || true
-
-# Symlink CaseOps data to expected paths
-ln -s fineweb10B_sp8192_lossless_caps_caseops_v1_reserved data/datasets/fineweb10B_sp8192
-
-# Check what tokenizer model name the CaseOps repo uses, then symlink it
-ls data/tokenizers/
-# Adjust filename below if different:
-ln -s fineweb_8192_lossless_caps_caseops_v1_reserved_bpe.model data/tokenizers/fineweb_8192_bpe.model
-
-# Verify symlinks resolve
-ls data/datasets/fineweb10B_sp8192/fineweb_train_000000.bin  # should exist
-ls data/tokenizers/fineweb_8192_bpe.model                     # should exist (or symlink)
-
-# --- Step 10c: Run P2 ---
-cd ..  # back to DL-Team-Proposal root
-cd parameter-golf
-bash ../runs/run_p2_lora_caseops_8gpu.sh
-cd ..
-
-# --- Step 10d: Quick results check ---
-# Look for these lines in the log:
-#   ttt_lora:start docs=... batch_size=64 lora_rank=8
-#   quantized_ttt_lora val_loss:X.XXXX val_bpb:X.XXXX eval_time:XXXXXms
-#
-# Compare to:
-#   P1a SGD TTT:  1.0769 BPB  (LoRA should beat this)
-#   P1a sliding:  1.0783 BPB
-#   C6 SGD TTT:   1.0805 BPB
-#   SOTA:         1.0611 BPB  (gap tells us what's left)
-
-# =============================================================================
-# VERIFICATION CHECKLIST (P2)
-# =============================================================================
-# [ ] Log shows "ttt_lora:start" with correct params (rank=8, lr=0.01, batch=64)
-# [ ] Log shows "quantized_ttt_lora val_bpb:X.XXXX" result
-# [ ] LoRA TTT BPB < P1a SGD TTT (1.0769) — confirms LoRA TTT helps
-# [ ] If CaseOps enabled: tokenizer path in log matches caseops model
-# [ ] Eval time < 600s (check eval_time in log)
+# [ ] Hyperparams printed show gated_attn_enabled=True, ema_decay=0.99,
+#     grad_accum_steps=1, train_batch_tokens=196608, caseops_enabled=True
+# [ ] Training completes within 600s wallclock
+# [ ] Artifact size < 16,000,000 bytes (under 16 MB budget)
+# [ ] Post-TTT val_bpb < 1.0613 (beats PR #1851 base)
 # [ ] Copy log to docs/ before terminating pod
 #
-# FALLBACK: If LoRA TTT crashes (shape mismatch, OOM, etc.):
-#   1. Check error message — most likely torch.compile conflict
-#   2. LoRA eval does NOT use torch.compile (uses eager mode), so this shouldn't happen
-#   3. If OOM: reduce TTT_LORA_BATCH_SIZE from 64 to 32
-#   4. If still broken: set TTT_LORA_ENABLED=0 TTT_ENABLED=1 to fall back to SGD TTT
+# FALLBACK:
+#   If CaseOps data path is wrong: set DATA_PATH and TOKENIZER_PATH env vars
+#   If OOM from small batch: try TRAIN_BATCH_TOKENS=393216 (2x)
+#   If gated attn hurts: set GATED_ATTN_ENABLED=0 to isolate EMA + small batch
