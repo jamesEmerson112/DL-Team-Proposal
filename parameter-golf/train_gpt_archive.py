@@ -76,7 +76,19 @@ class Hyperparameters:
     # Gated Attention (https://arxiv.org/abs/2505.06708, NeurIPS 2025 Best Paper)
     # "none" = disabled (baseline), "headwise" = 1 gate per head, "elementwise" = 1 gate per dim
     gated_attn = os.environ.get("GATED_ATTN", "none")
-
+    # SparseAttnGate:
+    # Inspired by "Gated Attention for Large Language Models:
+    # Non-linearity, Sparsity, and Attention-Sink-Free" (Qiu et al., 2025).
+    # We apply a sigmoid per-head gate to Q before SDPA to encourage sparse,
+    # query-dependent modulation of attention.
+    sparse_attn_gate = os.environ.get("SPARSE_ATTN_GATE", "0") == "1"
+    sparse_attn_gate_init = float(os.environ.get("SPARSE_ATTN_GATE_INIT", "0.0"))
+    # Softcapped CE:
+    # Inspired by "Gemma 2: Improving Open Language Models at a Practical Size"
+    # (Riviere et al., 2024), which uses tanh logit soft-capping:
+    # logits <- soft_cap * tanh(logits / soft_cap)
+    # before the final loss computation for stability.
+    fused_softcap_ce = os.environ.get("FUSED_SOFTCAP_CE", "0") == "1"
     # Optimizer hyperparameters.
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
@@ -1420,6 +1432,8 @@ class CausalSelfAttention(nn.Module):
         rope_base: float,
         qk_gain_init: float,
         gated_attn: str = "none",
+        sparse_attn_gate: bool = False,
+        sparse_attn_gate_init: float = 0.0,
     ):
         super().__init__()
         if dim % num_heads != 0:
@@ -1450,6 +1464,11 @@ class CausalSelfAttention(nn.Module):
         self.proj = CastedLinear(dim, dim, bias=False)      # Output projection: 512→512
         self.proj._zero_init = True                          # Start at zero so skip connections dominate early
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
+        self.sparse_attn_gate = sparse_attn_gate
+        if sparse_attn_gate:
+            self.sparse_gate = nn.Parameter(torch.full((num_heads,), sparse_attn_gate_init, dtype=torch.float32))
+        else:
+            self.register_parameter("sparse_gate", None)
         self.rotary = Rotary(self.head_dim, base=rope_base)
 
     def forward(self, x: Tensor, v0: Tensor | None = None, vr_alpha: float = 0.0) -> Tensor | tuple[Tensor, Tensor]:
@@ -1482,6 +1501,10 @@ class CausalSelfAttention(nn.Module):
         k = apply_rotary_emb(k, cos, sin)
         # Step 4: Scale Q by learnable per-head gain — controls attention sharpness
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
+        # SparseAttnGate: gate attention computation itself
+        if getattr(self, "sparse_gate", None) is not None:
+            sparse_gate = torch.sigmoid(self.sparse_gate).to(dtype=q.dtype)[None, :, None, None]
+            q = q * sparse_gate
         # Step 5: The actual attention — softmax(Q·Kᵀ/√d) · V with causal mask
         #         Uses FlashAttention kernel under the hood (memory-efficient, no full NxN matrix)
         #         GQA: repeat K,V heads to match Q heads (e.g. 4 KV → 8 Q, repeat 2×)
@@ -1558,11 +1581,13 @@ class Block(nn.Module):
         qk_gain_init: float,
         gated_attn: str = "none",
         activation: str = "relu2",
+        sparse_attn_gate: bool = False,
+        sparse_attn_gate_init: float = 0.0,
     ):
         super().__init__()
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
-        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init, gated_attn)
+        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init, gated_attn, sparse_attn_gate=sparse_attn_gate, sparse_attn_gate_init=sparse_attn_gate_init,)
         self.mlp = MLP(dim, mlp_mult, activation)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
@@ -1581,7 +1606,16 @@ class Block(nn.Module):
         if v_cached is not None:
             return x, v_cached
         return x
-
+    def fused_softcapped_cross_entropy(
+        logits_proj: Tensor,
+        targets: Tensor,
+        softcap: float,
+        reduction: str = "mean",
+    ) -> Tensor:
+        logits = softcap * torch.tanh(logits_proj / softcap)
+        logits = logits.reshape(-1, logits.size(-1))
+        targets = targets.reshape(-1)
+        return F.cross_entropy(logits.float(), targets, reduction=reduction)
 
 class GPT(nn.Module):
     def __init__(
@@ -1670,14 +1704,44 @@ class GPT(nn.Module):
             if self.lm_head is None:
                 raise RuntimeError("lm_head is required when tie_embeddings=False")
             logits_proj = self.lm_head(x)
-        return self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
+        return logits_proj
 
     def forward_logits(self, input_ids: Tensor) -> Tensor:
         """Return logits [batch, seq, vocab] without computing loss."""
         return self._run_backbone(input_ids)
 
+    def softcap_logits(self, logits_proj: Tensor) -> Tensor:
+        return self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
+
     def forward(self, input_ids: Tensor, target_ids: Tensor) -> Tensor:
         logits = self._run_backbone(input_ids)
+        if self.training and self.slm_enabled:
+            if Hyperparameters.fused_softcap_ce:
+                per_token_loss = fused_softcapped_cross_entropy(
+                    logits_proj,
+                    target_ids,
+                    self.logit_softcap,
+                    reduction="none",
+                )
+            else:
+                logits = self.softcap_logits(logits_proj)
+                per_token_loss = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)).float(),
+                    target_ids.reshape(-1),
+                    reduction="none",
+                )
+            k = max(1, int(per_token_loss.numel() * self.slm_ratio))
+            topk_losses, _ = torch.topk(per_token_loss, k)
+            return topk_losses.mean()
+
+        if Hyperparameters.fused_softcap_ce:
+            return fused_softcapped_cross_entropy(
+                logits_proj,
+                target_ids,
+                self.logit_softcap,
+                reduction="mean",
+            )
+        logits = self.softcap_logits(logits_proj)
         logits = logits.reshape(-1, logits.size(-1))
         targets = target_ids.reshape(-1)
         # Rho-1 Selective Language Modeling (https://arxiv.org/abs/2401.04056)
