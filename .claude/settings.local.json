@@ -17,7 +17,9 @@
       "Bash(do echo:*)",
       "Read(//c/Users/voan2/Documents/GitHub/DL-Team-Proposal/parameter-golf/logs/**)",
       "Bash(done)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(ls:*)",
+      "Bash(gh pr:*)"
     ]
   }
 }

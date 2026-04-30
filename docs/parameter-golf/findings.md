@@ -9,8 +9,9 @@
 | *frontier* | *ndokutovich #1967 (N-gram Tilt + LeakyReLU 0.3)* | *~36M* | — | *1.0585* | — | — | — | — | *ref* |
 | *SOTA* | *codemath3000 #1855 (SmearGate+LQER+9HP)* | *~36M* | — | *1.0611* | *~4,930* | — | *int6+lrzip* | *~15.90 MB* | *ref* |
 | **C6●** | **V2 Headwise + emb7+eclip15 (3-seed mean)** | **35.99M** | **2.7910** | **1.0805** | **4,467** | — | **int6+brotli** | **15.70 MB** | **Yes** |
-| L1◆ | V2 C6 + EMA=0.990 (legal, no PreQuantTTT) | 35.99M | 2.7972 | 1.0829 | 4,475 | — | int6+brotli | 15.75 MB | Yes |
+| L1◆ | V2 C6 + EMA=0.990 (legal) | 35.99M | 2.7976 | 1.0830 | 4,486 | — | int6+brotli | 15.75 MB | Yes |
 | A1● | V2 F1 control (no additions) | 35.94M | 2.7912 | 1.0806 | 4,580 | — | int6+brotli | 15.98 MB | Yes |
+| L2◆ | V2 C6 + Small Batch + EMA=0.990 | 35.99M | 2.8224 | 1.0926 | 13,146 | — | int6+brotli | 15.74 MB | Yes |
 | A3● | V2 F2 headwise (default compression) | 35.99M | 2.7899 | 1.0801 | — | — | int6+brotli | 15.99 MB | Tight |
 | A2● | V2 F7 (PR+RF, α=0.5) | 35.94M | 2.7971 | 1.0828 | 4,516 | — | int6+brotli | 15.98 MB | Yes |
 | 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | int8+zlib | 19.41 MB | **No** |
@@ -20,7 +21,7 @@
 
 **Best legal run: C6 (V2 Headwise + emb7+eclip15)** — 3-seed mean **1.0805 BPB**, **-0.1439 below PG baseline**, **+0.0194 above SOTA** (1.0611). 15.70 MB (under budget with 0.30 MB headroom). All 3 seeds under budget, train <600s, eval <600s.
 
-**◆ L1: EMA=0.990 HURT on 8×H100** (+0.0024 vs C6). With only ~4,475 steps, aggressive EMA averages too few checkpoints. EMA tuning is step-count dependent — helps at ~13,000 steps (2×H100 + Small Batch), hurts at ~4,500 steps (8×H100 default batch). Run L2 (Small Batch + EMA=0.990) pending — Small Batch gives ~13,000 steps where EMA=0.990 should shine.
+**◆ L1: EMA=0.990 HURT on 8×H100** (+0.0025 vs C6). With only ~4,486 steps, aggressive EMA averages too few checkpoints. **L2: Small Batch + EMA=0.990 HURT EVEN MORE** (+0.0121 vs C6). Despite 13,146 steps (where EMA=0.990 helped on 2×H100), the smaller batch size degrades quality more than extra steps help. EMA tuning does not transfer from 2×H100 to 8×H100 at any batch size.
 
 > **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. Legal best: C6 at 1.0805 BPB. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). Current legal SOTA: 1.0611 (codemath3000 PR #1855).
 
@@ -67,11 +68,11 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
-| **R4◆** | **V2 C6 + EMA=0.990 + PreQuantTTT** | **35.99M** | — | **1.0507** | — | — | **int6+brotli** | **15.70 MB** | **Yes** |
-| X1◆ | V2 C6 + Small Batch + EMA=0.990 + PreQuantTTT | 35.99M | — | 1.0591 | 3,193 | — | int6+brotli | 15.70 MB | Yes |
+| **N1◆** | **V2 C6 + EMA=0.990 + Small Batch** | **35.99M** | **2.9395** | **1.1368** | **1,853** | — | **int6+brotli** | **15.71 MB** | **Yes** |
 | **B2▲** | **V2 C6 + Small Batch ga=1 (Paper #15) (James-experiment-2)** | **35.99M** | **2.9512** | **1.1419** | **3,349** | — | **int6+brotli** | **15.71 MB** | **Yes** |
 | B3▲ | V2 C6 + Small Batch ga=1 + beta2=0.99 (James-experiment-2) | 35.99M | 2.9503 | 1.1422 | 3,349 | — | int6+brotli | 15.71 MB | Yes |
 | R3◆ | V2 C6 + EMA=0.990 | 35.99M | — | 1.1505 | — | — | int6+brotli | 15.71 MB | Yes |
+| N2◆ | V2 C6 + EMA=0.990 + Small Batch + DiffAttn (Paper #19) | 35.99M | 2.9722 | 1.1506 | 1,444 | — | int6+brotli | 15.71 MB | Yes |
 | R2◆ | V2 C6 + EMA=0.993 | 35.99M | — | 1.1526 | — | — | int6+brotli | 15.71 MB | Yes |
 | R1◆ | V2 C6 + EMA=0.995 + WD=0.10 | 35.99M | — | 1.1559 | — | — | int6+brotli | 15.71 MB | Yes |
 | **E1●** | **V2 C6 + EMA=0.995** | **35.99M** | — | **1.1562** | — | — | **int6+brotli** | **15.71 MB** | **Yes** |
@@ -162,6 +163,8 @@ Teammate experiments on a different base stack (rank 4 + MIN_LR=0.10, vanilla SP
 **▲ Runs B2-B3: Paper #15 (Small Batch Size), SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. GRAD_ACCUM_STEPS=1 + TRAIN_BATCH_TOKENS=196608 (4× smaller effective batch, 4× more optimizer updates). Best new technique: −0.015 BPB vs C6 baseline. 3,349 steps vs ~1,030 for C6. Beta2 scaling (0.95→0.99) makes no difference. Peri-LN (Paper #22) also tested — went to NaN immediately, output norms destabilize the rank 1 stack.**
 
 **◆ Runs R1-R4: Session 16 EMA deeper sweep + PreQuantTTT, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. EMA=0.990 new best (R3, 1.1505). PreQuantTTT (R4, 1.0507 TTT) is single biggest gain.**
+
+**◆ Runs N1-N2: Session 17 DiffAttn A/B test, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. N1 (C6+EMA=0.990+SmallBatch) = 1.1368 — new best legal 2×H100 result. EMA+SmallBatch stack: −0.0254 vs C6. N2 (N1+DiffAttn, Paper #19) = 1.1506 — FAILS, +0.0138 regression due to 22% fewer steps (1,444 vs 1,853) from 2× FA3 calls. Throughput penalty outweighs attention quality at 36M scale.**
 
 **Runs D and 13** originally claimed SLM but SLM code was absent on the pod. They are additional Run A repeats (SP8192 combo slim + TTT, no SLM). Run-to-run variance: A=1.2411, D=1.2396, 13=1.2384 (spread 0.0027, consistent with noise).
 

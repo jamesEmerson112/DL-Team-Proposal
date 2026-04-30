@@ -277,3 +277,15 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [finding] PG challenge deadline: April 30, 2026 at 4:59 PM PST
 - [finding] Small Batch is the only technique that improved on the V2 rank 1 stack. Papers #1 (SLM), #5 (Structured FFN), #16 (LR Warmup), #20 (ResFormer), #22 (Peri-LN) all failed.
 - [todo] Test Small Batch on 8×H100 — on 8 GPUs ga is already 1, need to reduce TRAIN_BATCH_TOKENS to get more updates. Projected: ~1.0655 BPB if -0.015 delta holds.
+
+### 2026-04-30 (Session 17 — C6 Legal Submission)
+- [feat] Updated `docs/James_notes/submission.json` — C6 3-seed data (mean 1.0805 BPB, std 0.0012), removed PreQuantTTT, set `no_pre_quant_ttt: true`, removed Small Batch/EMA tuning references (not used in C6), removed "rank 1 SOTA" from bigbag attribution (no longer rank 1)
+- [feat] Rewrote `docs/James_notes/pg_submission_readme.md` — C6 values throughout, marked as non-record submission, removed PreQuantTTT/Small Batch/EMA=0.990 sections (C6 uses default EMA 0.9965 and default batch 786432), updated compliance to "No Pre-Quantization TTT — fully legal", updated reproduction command (removed PREQUANT_TTT_ENABLED, EMA_DECAY, GRAD_ACCUM_STEPS, TRAIN_BATCH_TOKENS), cleaned credits (removed @okezue PreQuantTTT attribution)
+- [feat] Updated pg-fork (`jamesEmerson112/parameter-golf`): renamed submission folder from `2026-04-30_SP8192_FullStack_HeadwiseGate_PreQuantTTT` to `2026-04-30_SP8192_HeadwiseGate_EMA_LegalTTT`, replaced all 7 files (clean train_gpt.py with 0 prequant references, C6 seed logs, updated JSON/README)
+- [feat] Force-pushed to `submission/fullstack-headwise-gate` branch
+- [feat] Created new PR #2005 on openai/parameter-golf (PR #1992 was CLOSED, so created fresh): "Record: SP8192 + Headwise Gated Attention + Legal TTT (1.0805 BPB, 3-seed)"
+- [finding] C6 config confirmed from logs: gated_attn=headwise, embed_bits=7, embed_clip_sigmas=15.0, ema_decay=0.9965 (default), train_batch_tokens=786432 (default), grad_accum_steps=1 (8 GPUs), no PreQuantTTT
+- [finding] C6 verified results: seed42=1.0818, seed1337=1.0794, seed2025=1.0804, mean=1.0805 ±0.0012 BPB
+- [finding] bigbag is no longer rank 1 — updated all references to remove "rank 1 SOTA"
+- [ref] PR: https://github.com/openai/parameter-golf/pull/2005
+- [ref] pg-fork clone at /tmp/pg-fork (ephemeral, not persisted locally)
