@@ -74,3 +74,85 @@ cd ..
 # [ ] S1-S3 weights: each < 16,000,000 bytes (under 16 MB budget)
 # [ ] Ablation: A1 (control) > S1 (C6) in BPB confirms headwise gate helps on 8xH100
 # [ ] Copy logs to DL-Team-Proposal/docs/ for safekeeping before terminating pod
+
+# =============================================================================
+# STEP 10: P2 — LoRA TTT + CaseOps (8xH100, single run)
+# =============================================================================
+#
+# P2 = P1a base (C6 + 6 SOTA hparam overrides) + LoRA TTT + CaseOps tokenizer
+# P1a result: 1.0769 TTT BPB (over budget at 16.35 MB)
+# LoRA TTT replaces SGD TTT — per-document adaptation, Adam optimizer, rank 8
+# CaseOps = lossless capitalization encoding on sp8192 tokenizer (~0.001-0.002 BPB)
+#
+# Expected: ~13 min training + ~8-10 min eval (LoRA TTT uses more eval time)
+# Compare: P1a SGD TTT = 1.0769, SOTA = 1.0611
+
+# --- Step 10a: Download CaseOps files from PR #1855 ---
+# These are NOT in our repo. Download from openai/parameter-golf.
+
+cd parameter-golf
+
+# Option A: Using gh CLI (if authenticated on pod)
+gh pr checkout 1855 --repo openai/parameter-golf --detach
+SOTA_DIR="records/track_10min_16mb/2026-04-27_SP8192_LQER_SparseGate_BOSSmearFix_9HpStack_1.0611"
+cp "$SOTA_DIR/lossless_caps.py" ./lossless_caps.py
+cp "$SOTA_DIR/prepare_caseops_data.py" ./prepare_caseops_data.py
+mkdir -p data/tokenizers
+cp "$SOTA_DIR/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model" \
+   data/tokenizers/
+git checkout -   # go back to our branch
+
+# Option B: Using curl (no gh auth needed, only works if PR is merged to main)
+BASE="https://raw.githubusercontent.com/openai/parameter-golf/refs/heads/main"
+SOTA="records/track_10min_16mb/2026-04-27_SP8192_LQER_SparseGate_BOSSmearFix_9HpStack_1.0611"
+curl -L "$BASE/$SOTA/lossless_caps.py" -o lossless_caps.py
+curl -L "$BASE/$SOTA/prepare_caseops_data.py" -o prepare_caseops_data.py
+mkdir -p data/tokenizers
+curl -L "$BASE/$SOTA/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model" \
+     -o data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+
+# Verify files downloaded:
+ls -la lossless_caps.py prepare_caseops_data.py
+ls -la data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+
+# --- Step 10b: Reprocess FineWeb shards with CaseOps tokenizer ---
+# ~30-60 min. Creates new train+val shards with lossless capitalization encoding.
+# Skip this step to run without CaseOps (LoRA TTT still works with regular sp8192).
+
+python prepare_caseops_data.py \
+  --docs data/datasets/fineweb10B_sp8192 \
+  --out data/datasets/fineweb10B_sp8192_caseops \
+  --sp data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+
+# --- Step 10c: Run P2 ---
+cd ..  # back to DL-Team-Proposal root
+cd parameter-golf
+bash ../runs/run_p2_lora_caseops_8gpu.sh
+cd ..
+
+# --- Step 10d: Quick results check ---
+# Look for these lines in the log:
+#   ttt_lora:start docs=... batch_size=64 lora_rank=8
+#   quantized_ttt_lora val_loss:X.XXXX val_bpb:X.XXXX eval_time:XXXXXms
+#
+# Compare to:
+#   P1a SGD TTT:  1.0769 BPB  (LoRA should beat this)
+#   P1a sliding:  1.0783 BPB
+#   C6 SGD TTT:   1.0805 BPB
+#   SOTA:         1.0611 BPB  (gap tells us what's left)
+
+# =============================================================================
+# VERIFICATION CHECKLIST (P2)
+# =============================================================================
+# [ ] Log shows "ttt_lora:start" with correct params (rank=8, lr=0.01, batch=64)
+# [ ] Log shows "quantized_ttt_lora val_bpb:X.XXXX" result
+# [ ] LoRA TTT BPB < P1a SGD TTT (1.0769) — confirms LoRA TTT helps
+# [ ] If CaseOps enabled: tokenizer path in log matches caseops model
+# [ ] Eval time < 600s (check eval_time in log)
+# [ ] Copy log to docs/ before terminating pod
+#
+# FALLBACK: If LoRA TTT crashes (shape mismatch, OOM, etc.):
+#   1. Check error message — most likely torch.compile conflict
+#   2. LoRA eval does NOT use torch.compile (uses eager mode), so this shouldn't happen
+#   3. If OOM: reduce TTT_LORA_BATCH_SIZE from 64 to 32
+#   4. If still broken: set TTT_LORA_ENABLED=0 TTT_ENABLED=1 to fall back to SGD TTT
