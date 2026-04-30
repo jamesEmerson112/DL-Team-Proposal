@@ -44,12 +44,13 @@ python3 -c "import sentencepiece" 2>/dev/null || {
 }
 echo "Preflight: FA3 + brotli + sentencepiece OK"
 
-CASEOPS_SHARD="$PG_DIR/data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_000000.bin"
-if [ ! -f "$CASEOPS_SHARD" ]; then
-    echo "ERROR: CaseOps dataset not found. Run runs/configs/SETUP.md first."
+SHARD_PATH="$PG_DIR/data/datasets/fineweb10B_sp8192/fineweb_val_000000.bin"
+TOKENIZER_PATH="$PG_DIR/data/tokenizers/fineweb_8192_bpe.model"
+if [ ! -f "$SHARD_PATH" ] || [ ! -f "$TOKENIZER_PATH" ]; then
+    echo "ERROR: Vanilla SP8192 dataset not found. Run runs/configs/SETUP.md first."
     exit 1
 fi
-echo "Preflight: CaseOps dataset present"
+echo "Preflight: vanilla SP8192 dataset present"
 
 # --- Load configs: base first, then overlay ---
 source "$BASE_CONFIG"
