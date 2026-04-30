@@ -1,0 +1,108 @@
+# =============================================================================
+# Paper #16 (LR Warmup) + Paper #5 (Structured FFN) — 2×H100 RunPod
+# =============================================================================
+#
+# Tests two untested papers from the survey against C6 baseline:
+#   Paper #16: "Why Warmup the Learning Rate?" (NeurIPS 2024)
+#     - Rank 1 skips LR warmup entirely. We test adding real warmup.
+#   Paper #5:  "Building on Efficient Foundations: Structured FFN" (NeurIPS 2024)
+#     - Replace dense FFN with low-rank + block-diagonal matrices.
+#     - Fewer params → more steps in 10 min → potentially better BPB.
+#
+# 6 runs total (~78 min):
+#   R0: C6 baseline (control)           — verify ~1.1622 BPB
+#   R1: LR Warmup 2%                    — ~20 steps ramp
+#   R2: LR Warmup 5%                    — ~50 steps ramp
+#   R3: LR Warmup 10%                   — ~100 steps ramp
+#   R4: Structured FFN r=0.5 b=4        — 56% fewer MLP params
+#   R5: Structured FFN r=0.75 b=8       — 41% fewer MLP params
+#
+# Estimated cost: ~$4 for 2xH100 pod (~1.5 hours)
+# =============================================================================
+
+# === 1. Setup (new RunPod 2xH100) ===
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment-2
+git pull origin James-experiment-2
+
+# === 2. Install deps ===
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli
+pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Install FlashAttention-3 (required for V2 — NOT the same as flash-attn pip package)
+# Pre-built wheel for H100 (sm90). Check CUDA version first:
+
+python3 -c "import torch; print(f'CUDA: {torch.version.cuda}')"
+# CUDA 13.0 wheel:
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# === 3. Download SP8192 dataset (~5-10 min) ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# === 4. Preflight check ===
+python3 -c "
+from flash_attn_interface import flash_attn_func as fa3
+import brotli
+import torch
+print(f'PyTorch: {torch.__version__}')
+print(f'CUDA: {torch.version.cuda}')
+print(f'GPUs: {torch.cuda.device_count()}')
+print(f'FA3: OK')
+print(f'brotli: OK')
+assert torch.cuda.device_count() >= 2, f'Need 2 GPUs, found {torch.cuda.device_count()}'
+print('Preflight PASSED')
+"
+
+cd ..  # back to DL-Team-Proposal root
+
+# =============================================================================
+# 5. RUN ALL 6 EXPERIMENTS (~78 min)
+# =============================================================================
+# This script runs everything sequentially and prints a comparison table at end.
+# You can walk away and check results when it finishes.
+
+cd parameter-golf
+bash ../runs/run_v2_paper16_paper5_2gpu.sh
+
+# =============================================================================
+# VERIFICATION CHECKLIST
+# =============================================================================
+# [ ] All 6 logs exist in parameter-golf/logs/
+# [ ] R0 baseline: TTT BPB within ±0.003 of 1.1622
+# [ ] R1-R3 (LR warmup): check if any beat R0 by >= 0.001
+# [ ] R4-R5 (Struct FFN): check model_params < R0's ~36M AND step count higher
+# [ ] R4-R5: check if BPB within 0.005 of R0 (throughput-quality tradeoff)
+# [ ] Summary table printed at end — copy to docs/parameter-golf/findings.md
+# [ ] Copy logs to DL-Team-Proposal/docs/ before terminating pod
+
+# =============================================================================
+# MANUAL RUNS (if you want to run individual experiments)
+# =============================================================================
+# Always re-source v2_base.env before each run to reset toggles!
+#
+# --- R0: C6 baseline ---
+# source ../runs/configs/v2_base.env
+# export GATED_ATTN=headwise EMBED_BITS=7 EMBED_CLIP_SIGMAS=15.0
+# export RUN_ID=v2_p16p5_r0_baseline
+# torchrun --standalone --nproc_per_node=2 train_gpt_v2.py
+#
+# --- R1: LR Warmup 2% ---
+# source ../runs/configs/v2_base.env
+# export GATED_ATTN=headwise EMBED_BITS=7 EMBED_CLIP_SIGMAS=15.0
+# export LR_WARMUP_FRAC=0.02 RUN_ID=v2_p16p5_r1_warmup002
+# torchrun --standalone --nproc_per_node=2 train_gpt_v2.py
+#
+# --- R4: Structured FFN r=0.5 b=4 ---
+# source ../runs/configs/v2_base.env
+# export GATED_ATTN=headwise EMBED_BITS=7 EMBED_CLIP_SIGMAS=15.0
+# export STRUCTURED_FFN=1 FFN_RANK_RATIO=0.5 FFN_NUM_BLOCKS=4
+# export RUN_ID=v2_p16p5_r4_sffn_r50_b4
+# torchrun --standalone --nproc_per_node=2 train_gpt_v2.py
