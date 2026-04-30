@@ -51,8 +51,8 @@ CASEOPS_SHARD="$PG_DIR/data/datasets/fineweb10B_sp8192_caseops/datasets/datasets
 if [ ! -f "$CASEOPS_SHARD" ]; then
     echo "ERROR: CaseOps dataset not found at $CASEOPS_SHARD"
     echo "       Run the setup steps in runs/configs/SETUP.md first:"
-    echo "         1. Download docs_selected.jsonl from HF"
-    echo "         2. python3 data/prepare_caseops_data.py --docs ... --out ... --sp ..."
+    echo "         1. python3 parameter-golf/data/cached_challenge_fineweb.py --variant sp8192 --with-docs"
+    echo "         2. python3 parameter-golf/data/prepare_caseops_data.py --docs ... --out ... --sp ..."
     exit 1
 fi
 echo "Preflight: CaseOps dataset present"
