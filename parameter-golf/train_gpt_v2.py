@@ -316,15 +316,33 @@ def _byte_unshuffle(data):
 	for pos in range(stride):chunk_len=n//stride+(1 if pos<n%stride else 0);out[pos::stride][:chunk_len]=payload[src_off:src_off+chunk_len];src_off+=chunk_len
 	return out.tobytes()
 def _compress_pergroup(data):
-	import subprocess,struct
-	proc=subprocess.run(['lrzip','-L','9','-'],input=data,capture_output=True)
-	if proc.returncode!=0:raise RuntimeError(f"lrzip failed: {proc.stderr.decode()}")
-	return proc.stdout
+	"""Per-group compression: split quantized blob into chunks, compress each with best of lzma/brotli."""
+	import brotli
+	chunk_size=64*1024  # 64KB chunks
+	chunks=[];offset=0
+	while offset<len(data):
+		chunk=data[offset:offset+chunk_size]
+		c_lzma=lzma.compress(chunk,preset=9|lzma.PRESET_EXTREME)
+		c_brotli=brotli.compress(chunk,quality=11)
+		# Pick smaller
+		if len(c_lzma)<=len(c_brotli):
+			chunks.append(b'\x00'+len(c_lzma).to_bytes(4,'little')+c_lzma)
+		else:
+			chunks.append(b'\x01'+len(c_brotli).to_bytes(4,'little')+c_brotli)
+		offset+=chunk_size
+	header=len(data).to_bytes(8,'little')+len(chunks).to_bytes(4,'little')
+	return header+b''.join(chunks)
 def _decompress_pergroup(data):
-	import subprocess
-	proc=subprocess.run(['lrzip','-d','-'],input=data,capture_output=True)
-	if proc.returncode!=0:raise RuntimeError(f"lrzip -d failed: {proc.stderr.decode()}")
-	return proc.stdout
+	import brotli
+	orig_len=int.from_bytes(data[:8],'little');n_chunks=int.from_bytes(data[8:12],'little')
+	offset=12;result=bytearray()
+	for _ in range(n_chunks):
+		method=data[offset];offset+=1
+		chunk_len=int.from_bytes(data[offset:offset+4],'little');offset+=4
+		chunk=data[offset:offset+chunk_len];offset+=chunk_len
+		if method==0:result.extend(lzma.decompress(chunk))
+		else:result.extend(brotli.decompress(chunk))
+	return bytes(result[:orig_len])
 def prequant_ttt(h,device,val_data,base_model):
 	"""Pre-quantization TTT: AdamW fine-tuning on val set before GPTQ. Per PR #1911/#1958."""
 	log(f"prequant_ttt: start epochs={h.prequant_ttt_epochs} lr={h.prequant_ttt_lr}")

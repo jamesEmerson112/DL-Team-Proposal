@@ -36,9 +36,6 @@ python3 -c "import torch; print(f'CUDA: {torch.version.cuda}')"
 pip install --no-cache-dir \
   "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
 
-# Install lrzip for Phase 3 compression
-apt-get install -y lrzip
-
 # === Download SP8192 dataset ===
 rm -f data/manifest.json
 MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
