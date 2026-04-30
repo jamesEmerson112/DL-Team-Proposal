@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 30+ experiments completed, best submittable result: **1.2077 BPB** (Run 11).
+This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 35+ experiments completed, best submittable result: **1.0805 BPB** (C6, 3-seed mean on 8×H100 — matches SOTA).
 
 ## Repository Structure
 
@@ -25,9 +25,10 @@ Active research + experimentation repository. Code modifications in `parameter-g
 ## Key Context
 
 - **Parameter Golf** is the active competition target: 16 MB artifact, 10 min on 8×H100, scored by FineWeb validation BPB
-- 30+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
-- Best submittable result: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT) — beats PG baseline (1.2244)
-- 3-seed reproducibility confirmed: mean 1.2073 ±0.0006 BPB
+- 35+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
+- Best submittable result: **1.0805 BPB** (C6, V2 headwise + emb7+eclip15, 3-seed mean on 8×H100) — matches SOTA (1.0810)
+- 3-seed reproducibility confirmed: C6 mean 1.0805 ±0.0012 BPB (V1 Run 11: 1.2073 ±0.0006)
+- **DO NOT SUBMIT YET** — matches SOTA but doesn't clear >=0.005 nats threshold for SOTA record. Keep technique secret.
 - nanochat is the official successor to nanoGPT (released Oct 2025) — studied for technique porting but not used directly
 
 ## Context History
@@ -253,3 +254,26 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [finding] Projected 8×H100 with EMA=0.990 + PreQuantTTT: ~0.97-1.00 BPB — would beat SOTA (1.0136)
 - [edit] Updated `docs/parameter-golf/findings.md`: added Session 16 section, R1-R4 to 2×H100 leaderboard, updated "Where We Stand"
 - [todo] Run 8×H100 3-seed with EMA=0.990 + PreQuantTTT — projected to beat SOTA
+
+### 2026-04-30 (Session 15-16 — Paper Experiments on James-experiment-2)
+- [branch] Created `James-experiment-2` from `James-experiment` for Paper #16/#5/#22/#15 experiments
+- [feat] Implemented LR Warmup (`LR_WARMUP_FRAC` env var) in `parameter-golf/train_gpt_v2.py` — modifies `lr_mul()` to add linear ramp before warmdown
+- [feat] Implemented Structured FFN (`StructuredMLP` class) — low-rank up-proj + block-diagonal down-proj with `STRUCTURED_FFN`, `FFN_RANK_RATIO`, `FFN_NUM_BLOCKS` env vars
+- [feat] Implemented Peri-LN (`PERI_LN` env var) — output RMSNorm on attn + MLP in Block.forward
+- [feat] Made `grad_accum_steps` configurable via `GRAD_ACCUM_STEPS` env var (was hardcoded `8//world_size`)
+- [run] Paper #16 (LR Warmup): tested 2%, 5%, 10% on 2×H100. **All FAILED** — monotonically worse (+0.0024 to +0.0066 BPB). Rank 1 was right to skip warmup.
+- [run] Paper #5 (Structured FFN): tested r=0.5/b=4 and r=0.75/b=8 on 2×H100. **FAILED** — saves 30-56% MLP params but +0.04-0.05 BPB degradation. Paper tested at 125M+; doesn't transfer to 36M.
+- [run] Paper #22 (Peri-LN): **FAILED** — immediate NaN. Output norms destabilize rank 1 stack (conflicts with attn_scale/mlp_scale + ln_scale_factor).
+- [run] Paper #15 (Small Batch): tested ga=1 + TRAIN_BATCH_TOKENS=196608 on 2×H100. **SUCCESS: -0.015 BPB** (B2=1.1419 vs baseline 1.1572). Biggest V2 technique win. 3,349 steps vs ~1,030. Beta2 scaling (0.99) makes no difference.
+- [bugfix] Fixed OOM in small batch runs — must reduce TRAIN_BATCH_TOKENS by 4x when setting GRAD_ACCUM_STEPS=1
+- [bugfix] Fixed `set -uo pipefail` crash in run script — `$BETA2` unset, used `${BETA2:-0.95}` fallback
+- [feat] Created run scripts: `runs/run_v2_paper16_paper5_2gpu.sh`, `runs/run_v2_paper22_paper15_2gpu.sh`
+- [feat] Created 8 new env configs for all experiments
+- [feat] Created runbooks: `docs/James_test/run_paper16_paper5_2gpu_commands.txt`, `docs/James_test/run_paper22_paper15_2gpu_commands.txt`
+- [feat] Created `docs/James_test/small_batch_merge_guide.txt` — 2-edit guide for porting Small Batch to James-experiment branch
+- [edit] Updated `docs/parameter-golf/findings.md` — added B2/B3 (small batch), P0-P5 (LR warmup + structured FFN) to tables, resolved 3 merge conflicts, added key insights #11-15
+- [edit] Updated `docs/parameter-golf/neurlps-paper-survey.md` — marked Papers #5, #16 as "Tested — FAILS"
+- [merge] Applied Small Batch edits to `James-experiment` branch (2 edits to train_gpt_v2.py)
+- [finding] PG challenge deadline: April 30, 2026 at 4:59 PM PST
+- [finding] Small Batch is the only technique that improved on the V2 rank 1 stack. Papers #1 (SLM), #5 (Structured FFN), #16 (LR Warmup), #20 (ResFormer), #22 (Peri-LN) all failed.
+- [todo] Test Small Batch on 8×H100 — on 8 GPUs ga is already 1, need to reduce TRAIN_BATCH_TOKENS to get more updates. Projected: ~1.0655 BPB if -0.015 delta holds.

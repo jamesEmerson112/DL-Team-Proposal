@@ -1,0 +1,63 @@
+Full Stack Run — Small Batch + EMA=0.990 + PreQuantTTT
+=====================================================
+
+Pod: RunPod, 2×H100 SXM, PyTorch 2.11+, CUDA 13.0
+Estimated time: ~15 min (10 min train + 5 min eval/GPTQ/TTT)
+Estimated cost: ~$2-3
+
+=== POD SETUP ===
+
+# 1. Install FA3
+pip install flash-attn --no-build-isolation
+
+# 2. Download SP8192 dataset
+cd /workspace
+git clone https://github.com/jamesEmerson112/parameter-golf.git
+cd parameter-golf
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+rm -rf /workspace/.cache/huggingface/hub/datasets--kevclark--parameter-golf
+
+# 3. Clone experiment repo
+cd /workspace
+git clone -b James-experiment https://github.com/jamesEmerson112/DL-Team-Proposal.git
+
+=== RUN ===
+
+cd /workspace/parameter-golf
+bash /workspace/DL-Team-Proposal/runs/run_v2_fullstack_2gpu.sh
+
+=== WHAT TO LOOK FOR ===
+
+The script prints a full comparison table at the end. Key metrics:
+
+1. Steps: should be ~3,349 (confirms Small Batch working — 4× more than C6's ~1,030)
+2. Pre-Q BPB: should be < 1.14 (Small Batch + EMA stacking)
+3. PostPQ BPB: should be < 1.02 (PreQuantTTT working on combo model)
+4. TTT BPB: the final metric — see pass/fail below
+5. Weights: must be < 16,000,000 bytes (under budget)
+
+=== PASS/FAIL ===
+
+TTT BPB < 1.00  → HOME RUN. Run 8×H100 3-seed.
+TTT BPB 1.00-1.03 → GOOD. Run 8×H100 3-seed.
+TTT BPB 1.03-1.05 → OK. Partial stacking. Try EMA sweep.
+TTT BPB > 1.05  → BAD. Small Batch may hurt PreQuantTTT. Test without it.
+
+Projected (additive): ~1.02 TTT BPB on 2×H100.
+
+=== NEXT STEPS ===
+
+If GOOD or HOME RUN:
+  1. Push results to findings.md
+  2. Run on 8×H100 3-seed:
+     NGPUS=8 TRAIN_BATCH_TOKENS=196608 bash runs/run_v2_fullstack_2gpu.sh
+     (Note: on 8 GPUs, ga is already 1. Small Batch = reduce TRAIN_BATCH_TOKENS.)
+  3. If 8×H100 beats SOTA (1.0136), prepare submission
+
+If OK:
+  1. Try EMA=0.993 and EMA=0.995 with Small Batch + PreQuantTTT
+  2. The optimal EMA may shift with 3× more training steps
+
+If BAD:
+  1. Run PreQuantTTT without Small Batch (= R4 repeat, should get ~1.0507)
+  2. Compare to determine if Small Batch is the culprit
