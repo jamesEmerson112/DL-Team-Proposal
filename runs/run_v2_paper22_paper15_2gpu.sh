@@ -70,11 +70,11 @@ run_v2 "R1: Peri-LN" "v2_p22p15_r1_peri_ln" \
 
 # R2: Small Batch ga=1
 run_v2 "R2: Small Batch ga=1" "v2_p22p15_r2_ga1" \
-    "GRAD_ACCUM_STEPS=1"
+    "GRAD_ACCUM_STEPS=1" "TRAIN_BATCH_TOKENS=196608"
 
 # R3: Small Batch ga=1 + beta2=0.99
 run_v2 "R3: Small Batch ga=1 + b2=0.99" "v2_p22p15_r3_ga1_b299" \
-    "GRAD_ACCUM_STEPS=1" "BETA2=0.99" "MUON_BETA2=0.99"
+    "GRAD_ACCUM_STEPS=1" "TRAIN_BATCH_TOKENS=196608" "BETA2=0.99" "MUON_BETA2=0.99"
 
 # RESULTS
 echo ""
