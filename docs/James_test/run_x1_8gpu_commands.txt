@@ -1,12 +1,17 @@
 # -----------------------------------------------------------------------
-# X1 Full Stack: Small Batch + EMA=0.990 + PreQuantTTT — 8×H100 3-Seed
+# Legal Experiment Runs — 8×H100 (Sequential, 3 runs)
 #
-# PR submission run. 3 seeds for reproducibility.
-# 2×H100 result: 1.0591 TTT BPB. Projected 8×H100: ~0.98-1.00 BPB.
-# Estimated time: ~45 min (3 seeds x ~15 min each)
+# PreQuantTTT has C3 compliance violation (score-after-adapt, see PR #1958).
+# These runs test legal alternatives: EMA=0.990, Small Batch, clip sigma tuning.
+#
+# Baseline (C6 without PreQuantTTT): 1.0805 BPB (8×H100, 3-seed)
+# Goal: Get as close to SOTA (1.0611, codemath3000 PR #1855) as possible.
+#
+# Estimated time: ~15 min per run = ~45 min total
+# Estimated cost: ~$12 total (3 runs × ~$4 each)
 # -----------------------------------------------------------------------
 
-# === 1. Setup ===
+# === 1. Setup (if fresh pod) ===
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
 git fetch origin
@@ -35,16 +40,14 @@ cd ..
 # === 4. Preflight ===
 python3 -c "
 import sys
-sys.path.insert(0, 'parameter-golf')
-with open('parameter-golf/train_gpt_v2.py') as f:
+with open('parameter-golf/train_gpt.py') as f:
     code = f.read()
 checks = {
     'GRAD_ACCUM_STEPS env var': 'GRAD_ACCUM_STEPS' in code,
     'PREQUANT_TTT_ENABLED': 'PREQUANT_TTT_ENABLED' in code,
-    'prequant_ttt function': 'prequant_ttt' in code,
-    'weights_only=False fix': 'weights_only=False' in code,
     'EMA_DECAY env var': 'EMA_DECAY' in code,
     'GATED_ATTN env var': 'GATED_ATTN' in code,
+    'MLP_CLIP_SIGMAS or MATRIX_CLIP_SIGMAS': 'CLIP_SIGMAS' in code,
 }
 all_ok = all(checks.values())
 for name, ok in checks.items():
@@ -55,42 +58,64 @@ if not all_ok:
     sys.exit(1)
 "
 
-# === 5. Run 3-Seed on 8×H100 (~45 min) ===
+# =====================================================================
+# RUN 1: C6 + EMA=0.990 (legal baseline, no PreQuantTTT)
 #
-# Config: C6 base + Small Batch (ga=1, batch÷4) + EMA=0.990 + PreQuantTTT 21ep
-# Each GPU processes 196608/8 = 24,576 tokens/step
-#
-# PASS: All 3 seeds under 16 MB, TTT BPB < 1.05
-# GREAT: TTT BPB < 1.00 (beats SOTA)
-#
-bash runs/run_v2_x1_8gpu.sh
+# What: EMA=0.990 reduced from default 0.9965
+# Why:  Session 16 found EMA keeps improving as decay decreases
+# Expected: ~1.069 BPB (C6 1.0805 minus EMA delta 0.0117)
+# Pass: Beats C6 (1.0805)
+# =====================================================================
 
-# === 6. Post-Run: Prepare PR Submission ===
+bash runs/run_legal_8gpu.sh runs/configs/legal_ema090.env
+
+# >>> RECORD Run 1 result here: _____ BPB
+# >>> If WORSE than 1.0805: STOP — investigate before Run 2
+# >>> If BETTER than 1.0805: proceed to Run 2
+
+# =====================================================================
+# RUN 2: C6 + EMA=0.990 + Small Batch (no PreQuantTTT)
 #
-# The script prints a submission.json snippet. Copy it.
-# Then:
+# What: GRAD_ACCUM_STEPS=1, TRAIN_BATCH_TOKENS=196608 (÷4)
+# Why:  4× more optimizer updates in same wall clock (Paper #15)
+# Expected: ~1.054-1.065 BPB (Run 1 minus Small Batch delta 0.015)
+# Pass: Beats Run 1
+# =====================================================================
+
+bash runs/run_legal_8gpu.sh runs/configs/legal_ema090_smallbatch.env
+
+# >>> RECORD Run 2 result here: _____ BPB
+# >>> Compare Run 1 vs Run 2:
+# >>>   Run 2 wins? → Edit legal_ema090_clipsigma.env: uncomment Small Batch lines
+# >>>   Run 1 wins? → Leave legal_ema090_clipsigma.env as-is
+
+# =====================================================================
+# RUN 3: Best of Run 1/2 + PR #1855 clip sigmas (no PreQuantTTT)
 #
-# cd parameter-golf
-# git remote add upstream https://github.com/openai/parameter-golf.git  # if needed
-# git fetch upstream
-# git checkout main && git merge upstream/main && git push origin main
+# What: MLP_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0 (from codemath3000)
+# Why:  Better GPTQ clipping = less quantization error, legal
+# Expected: -0.002 to -0.005 BPB improvement
+# Pass: Beats Run 1/2
 #
-# git checkout -b submission/fullstack-headwise-gate
-# mkdir -p records/track_10min_16mb/2026-04-30_SP8192_FullStack_HeadwiseGate_PreQuantTTT
+# IMPORTANT: Before running, edit runs/configs/legal_ema090_clipsigma.env
+# to match the winner of Run 1 vs Run 2 (uncomment Small Batch if Run 2 won)
+# =====================================================================
+
+bash runs/run_legal_8gpu.sh runs/configs/legal_ema090_clipsigma.env
+
+# >>> RECORD Run 3 result here: _____ BPB
+
+# =====================================================================
+# RESULTS SUMMARY — fill in after all 3 runs
+# =====================================================================
 #
-# # Copy files into submission folder:
-# cp train_gpt_v2.py records/.../train_gpt.py
-# cp logs/x1_fullstack_seed42.txt records/.../train_seed42.log
-# cp logs/x1_fullstack_seed1337.txt records/.../train_seed1337.log
-# cp logs/x1_fullstack_seed2025.txt records/.../train_seed2025.log
-# # Copy pg_submission_readme.md → records/.../README.md (fill in X.XXXX values)
-# # Copy submission.json → records/.../submission.json (fill in values)
-# # Create requirements.txt: sentencepiece, brotli, numpy
+# | Run | Config                          | TTT BPB | vs C6 (1.0805) |
+# |-----|---------------------------------|---------|----------------|
+# | 1   | C6 + EMA=0.990                  | _______ | _______        |
+# | 2   | C6 + EMA=0.990 + Small Batch    | _______ | _______        |
+# | 3   | Best + clip sigmas from #1855   | _______ | _______        |
 #
-# git add records/track_10min_16mb/2026-04-30_SP8192_FullStack_HeadwiseGate_PreQuantTTT/
-# git commit -m "Add record: SP8192 Full Stack + Headwise Gated Attention + PreQuantTTT"
-# git push origin submission/fullstack-headwise-gate
-#
-# gh pr create --repo openai/parameter-golf \
-#   --title "SP8192 Full Stack + Headwise Gated Attention + PreQuantTTT (val_bpb=X.XXXX)" \
-#   --body "$(cat records/.../README.md)"
+# Decision:
+#   Near 1.0611 (SOTA)?  → Do 3-seed run for submission
+#   Above 1.0611?        → Need LQER or other techniques, discuss next steps
+#   Above 1.0805 (C6)?   → Something wrong, investigate
