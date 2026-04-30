@@ -1662,6 +1662,8 @@ class GPT(nn.Module):
                     qk_gain_init,
                     gated_attn,
                     activation,
+                    sparse_attn_gate=Hyperparameters.sparse_attn_gate,
+                    sparse_attn_gate_init=Hyperparameters.sparse_attn_gate_init,
                 )
                 for i in range(num_layers)
             ]
