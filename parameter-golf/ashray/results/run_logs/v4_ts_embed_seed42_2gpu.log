@@ -1,0 +1,172 @@
+W0430 20:31:06.118000 1066 torch/distributed/run.py:851] 
+W0430 20:31:06.118000 1066 torch/distributed/run.py:851] *****************************************
+W0430 20:31:06.118000 1066 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0430 20:31:06.118000 1066 torch/distributed/run.py:851] *****************************************
+Hyperparameters:
+  adam_eps: 1e-08
+  adam_wd: 0.02
+  artifact_dir: /workspace/DL-Team-Proposal/parameter-golf/ashray/parameter-golf/records/v4_ts_embed_seed42_2gpu
+  attn_clip_sigmas: 13.0
+  attn_out_gate_enabled: False
+  attn_out_gate_src: proj
+  beta1: 0.9
+  beta2: 0.95
+  caseops_enabled: False
+  compressor: brotli
+  data_dir: ./data
+  datasets_dir: ./data/datasets/fineweb10B_sp8192
+  distributed: True
+  ema_decay: 0.9965
+  embed_bits: 7
+  embed_clip_sigmas: 15.0
+  embed_lr: 0.6
+  embed_wd: 0.085
+  enable_looping_at: 0.35
+  eval_seq_len: 2048
+  eval_stride: 64
+  gate_window: 12
+  gated_attn_enabled: True
+  gated_attn_init_std: 0.005
+  gated_attn_quant_gate: True
+  global_ttt_batch_seqs: 32
+  global_ttt_chunk_tokens: 32768
+  global_ttt_epochs: 1
+  global_ttt_grad_clip: 1.0
+  global_ttt_lr: 0.001
+  global_ttt_momentum: 0.9
+  global_ttt_respect_doc_boundaries: True
+  global_ttt_warmup_chunks: 0
+  global_ttt_warmup_start_lr: 0.0
+  gptq_calibration_batches: 16
+  gptq_reserve_seconds: 4.0
+  grad_accum_steps: 4
+  grad_clip_norm: 0.3
+  is_main_process: True
+  iterations: 20000
+  ln_scale: True
+  local_rank: 0
+  logfile: /workspace/DL-Team-Proposal/parameter-golf/ashray/parameter-golf/records/v4_ts_embed_seed42_2gpu/v4_ts_embed_seed42_2gpu.txt
+  logit_softcap: 30.0
+  loop_end: 5
+  loop_start: 4
+  matrix_bits: 6
+  matrix_clip_sigmas: 12.85
+  matrix_lr: 0.026
+  max_wallclock_seconds: 600.0
+  min_lr: 0.1
+  mlp_clip_sigmas: 12.0
+  mlp_mult: 4.0
+  model_dim: 512
+  model_path: /workspace/DL-Team-Proposal/parameter-golf/ashray/parameter-golf/records/v4_ts_embed_seed42_2gpu/final_model.pt
+  muon_backend_steps: 5
+  muon_momentum: 0.97
+  muon_momentum_warmup_start: 0.92
+  muon_momentum_warmup_steps: 1500
+  muon_row_normalize: True
+  muon_wd: 0.095
+  num_heads: 8
+  num_kv_heads: 4
+  num_layers: 11
+  num_loops: 2
+  parallel_final_lane: mean
+  parallel_start_layer: 8
+  phased_ttt_num_phases: 3
+  phased_ttt_prefix_docs: 2000
+  qk_gain_init: 5.0
+  quantized_model_path: /workspace/DL-Team-Proposal/parameter-golf/ashray/parameter-golf/records/v4_ts_embed_seed42_2gpu/final_model.int6.ptz
+  rank: 0
+  rope_base: 10000.0
+  rope_dims: 16
+  rope_train_seq_len: 2048
+  rope_yarn: False
+  run_id: v4_ts_embed_seed42_2gpu
+  scalar_lr: 0.02
+  seed: 42
+  skip_gates_enabled: True
+  smear_gate_enabled: False
+  tie_embeddings: True
+  tied_embed_init_std: 0.005
+  tied_embed_lr: 0.03
+  tokenizer_path: ./data/tokenizers/fineweb_8192_bpe.model
+  train_batch_tokens: 786432
+  train_files: ./data/datasets/fineweb10B_sp8192/fineweb_train_*.bin
+  train_log_every: 200
+  train_seq_len: 2048
+  ts_embed_enabled: True
+  ttt_batch_size: 64
+  ttt_beta1: 0.0
+  ttt_beta2: 0.999
+  ttt_chunk_size: 48
+  ttt_enabled: False
+  ttt_eval_batches: 
+  ttt_eval_seq_len: 2048
+  ttt_grad_steps: 1
+  ttt_k_lora: True
+  ttt_lora_lr: 0.0001
+  ttt_lora_rank: 96
+  ttt_mlp_lora: True
+  ttt_o_lora: True
+  ttt_optimizer: adam
+  ttt_weight_decay: 0.5
+  val_batch_tokens: 524288
+  val_bytes_files: ./data/datasets/fineweb10B_sp8192/fineweb_val_bytes_*.bin
+  val_doc_fraction: 1.0
+  val_files: ./data/datasets/fineweb10B_sp8192/fineweb_val_*.bin
+  val_loss_every: 0
+  vocab_size: 8192
+  warmdown_frac: 0.75
+  warmup_steps: 20
+  world_size: 2
+  xsa_last_n: 11
+train_shards: 80
+val_tokens: 40540160
+model_params:35990170
+gptq:reserving 4s, effective=596000ms
+warmup_cu_buckets:64,128,192,256 iters_each:3
+warmup_step: 1/20
+warmup_step: 2/20
+warmup_step: 3/20
+warmup_step: 4/20
+warmup_step: 5/20
+warmup_step: 6/20
+warmup_step: 10/20
+warmup_step: 20/20
+loop_warmup:enabled encoder:[0, 1, 2, 3, 4, 5, 4] decoder:[5, 4, 5, 6, 7, 8, 9, 10]
+loop_warmup_step: 1/20
+loop_warmup_step: 2/20
+loop_warmup_step: 3/20
+loop_warmup_step: 4/20
+loop_warmup_step: 5/20
+loop_warmup_step: 6/20
+loop_warmup_step: 10/20
+loop_warmup_step: 20/20
+1/20000 train_loss: 9.0055 train_time: 0.0m tok/s: 2381789
+2/20000 train_loss: 12.4483 train_time: 0.0m tok/s: 2214722
+3/20000 train_loss: 11.1701 train_time: 0.0m tok/s: 2058602
+4/20000 train_loss: 9.6009 train_time: 0.0m tok/s: 2055856
+5/20000 train_loss: 8.3997 train_time: 0.0m tok/s: 2065248
+200/20000 train_loss: 3.5727 train_time: 1.2m tok/s: 2151897
+400/20000 train_loss: 3.3597 train_time: 2.4m tok/s: 2148782
+layer_loop:enabled step:570 frac:0.350 encoder:[0, 1, 2, 3, 4, 5, 4] decoder:[5, 4, 5, 6, 7, 8, 9, 10]
+600/20000 train_loss: 3.1297 train_time: 3.7m tok/s: 2113442
+800/20000 train_loss: 3.1815 train_time: 5.3m tok/s: 1964160
+1000/20000 train_loss: 3.0780 train_time: 7.0m tok/s: 1884937
+1200/20000 train_loss: 2.9921 train_time: 8.6m tok/s: 1836110
+1359/20000 val_loss: 2.9354 val_bpb: 1.1364
+stopping_early: wallclock_cap train_time: 596314ms step: 1359/20000
+peak memory allocated: 36149 MiB reserved: 40336 MiB
+ema:applying EMA weights
+diagnostic pre-quantization post-ema val_loss:2.96218064 val_bpb:1.14671062 eval_time:14766ms
+Serialized model: 135595260 bytes
+Code size (uncompressed): 136676 bytes
+Code size (compressed): 28385 bytes
+GPTQ:collecting Hessians from calibration data...
+GPTQ:collected 67 Hessians in 9.4s
+Quantized weights:
+  gate_int8_row: blocks.attn.attn_gate_w
+  gptq (int6): blocks.attn.c_k.weight, blocks.attn.c_q.weight, blocks.attn.c_v.weight, blocks.attn.proj.weight, blocks.mlp.fc.weight, blocks.mlp.proj.weight
+  gptq (int7): tok_emb.weight
+  passthrough (float16): blocks.attn.q_gain, blocks.attn_scale, blocks.mlp_scale, blocks.resid_mix, parallel_post_lambdas, parallel_resid_lambdas, skip_gates, skip_weights, ts_embed
+Serialized model quantized+brotli: 15966085 bytes
+Total submission size quantized+brotli: 15994470 bytes
+diagnostic quantized val_loss:2.97851899 val_bpb:1.15303547 eval_time:77386ms
