@@ -1,0 +1,67 @@
+# Small Batch (Paper #15) — Merge Guide for train_gpt_v2.py
+#
+# Apply these 2 edits to train_gpt_v2.py on James-experiment branch
+# after merging James-experiment-2.
+#
+# What it does: removes gradient accumulation so the model gets 4x more
+# optimizer updates in the same 10-min wall clock.
+# Result: -0.015 BPB on 2xH100 (1.1419 vs 1.1572 baseline).
+
+# =============================================================================
+# EDIT 1: Make grad_accum_steps configurable (Hyperparameters class, line 7)
+# =============================================================================
+#
+# Find this in the Hyperparameters semicolon chain:
+#
+#   ;grad_accum_steps=8//world_size;
+#
+# Replace with:
+#
+#   ;grad_accum_steps=int(os.environ.get('GRAD_ACCUM_STEPS',str(8//world_size)));
+#
+# This preserves the default (4 on 2xH100, 1 on 8xH100) but allows override.
+
+# =============================================================================
+# EDIT 2: Add logging (after the model_params log line in train_model())
+# =============================================================================
+#
+# Find:
+#   log(f"model_params:{sum(p.numel()for p in base_model.parameters())}")
+#
+# Add this line right after it:
+#   if h.grad_accum_steps!=8//h.world_size:log(f"grad_accum:overridden steps={h.grad_accum_steps}")
+
+# =============================================================================
+# HOW TO RUN
+# =============================================================================
+#
+# Set these env vars (on top of C6 config):
+#
+#   export GRAD_ACCUM_STEPS=1
+#   export TRAIN_BATCH_TOKENS=196608
+#
+# IMPORTANT: You MUST reduce TRAIN_BATCH_TOKENS from 786432 to 196608 (divide
+# by 4) when using ga=1. Otherwise each microstep is 4x larger and OOMs.
+# The point is same per-step memory, but 4x more optimizer updates.
+#
+# Beta2 scaling (BETA2=0.99, MUON_BETA2=0.99) makes no difference (tested B3 vs B2).
+
+# =============================================================================
+# RESULTS (2xH100, James-experiment-2, 2026-04-30)
+# =============================================================================
+#
+# Run | Config                                      | TTT BPB | vs C6
+# B2  | ga=1, TRAIN_BATCH_TOKENS=196608             | 1.1419  | -0.0153
+# B3  | ga=1, TRAIN_BATCH_TOKENS=196608, beta2=0.99 | 1.1422  | -0.0150
+# C6  | baseline (ga=4, default)                    | 1.1572  | ---
+#
+# Steps: 3,349 (vs ~1,030 for C6) -- 3.3x more optimizer updates in same wall clock.
+
+# =============================================================================
+# NOTE ON 8xH100
+# =============================================================================
+#
+# On 8xH100, grad_accum_steps is already 1 (8//8=1). To get the same effect,
+# reduce TRAIN_BATCH_TOKENS from 786432 to 196608. This gives 4x more updates
+# but with 4x smaller effective batch. Untested at 8xH100 -- the -0.015 delta
+# may not fully transfer.
