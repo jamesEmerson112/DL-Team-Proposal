@@ -55,7 +55,7 @@ run_v2() {
         export "$override"
     done
 
-    echo "VERIFY: GATED_ATTN=$GATED_ATTN PERI_LN=$PERI_LN GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-default} BETA2=$BETA2 MUON_BETA2=$MUON_BETA2 RUN_ID=$RUN_ID"
+    echo "VERIFY: GATED_ATTN=$GATED_ATTN PERI_LN=$PERI_LN GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-default} BETA2=${BETA2:-0.95} MUON_BETA2=${MUON_BETA2:-0.95} RUN_ID=$RUN_ID"
 
     if torchrun --standalone --nproc_per_node=$NGPUS "$TRAIN_SCRIPT" 2>&1 | tee "logs/${run_id}.txt"; then
         echo "==> $label: OK"
