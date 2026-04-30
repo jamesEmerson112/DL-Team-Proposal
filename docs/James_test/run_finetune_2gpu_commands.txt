@@ -1,18 +1,17 @@
 # =============================================================================
-# C6 Fine-Tuning Sweep on 2xH100 (19 runs, ~4 hours)
+# Session 16: Full Pipeline on 2xH100 (6 runs, ~1.5 hours)
 # =============================================================================
 #
-# Goal: Find hyperparameter improvements to push past the 0.005 nats threshold.
-# Base: C6 (headwise + emb7 + eclip15), our best submittable config.
+# Phase 1: EMA deeper sweep (3 runs, ~40 min)
+#   R1: EMA=0.995 + WD=0.10, R2: EMA=0.993, R3: EMA=0.990
+# Phase 2: PreQuantTTT with best EMA (1 run, ~15 min)
+#   R4: 21 epochs AdamW on val before GPTQ
+# Phase 3: Compression (2 runs, ~30 min)
+#   R5: lrzip+emb7, R6: lrzip+emb8 (relaxed)
 #
-# Groups:
-#   1. TTT epoch x LR grid (9 runs) — find optimal TTT settings
-#   2. QK-Gain sweep (3 runs) — try 5.5, 5.75, 6.0 (rank 1 = 5.25)
-#   3. EMA decay sweep (3 runs) — try 0.995, 0.997, 0.999 (rank 1 = 0.9965)
-#   4. Weight decay sweep (3 runs) — try 0.08, 0.10, 0.11 (rank 1 = 0.095)
-#   5. Warmdown frac (1 run) — try 0.80 (rank 1 = 0.72)
-#
-# Estimated cost: ~$16 for 2xH100 pod (~4 hours)
+# Auto-picks best EMA from Phase 1 and feeds into Phase 2-3.
+# Session 15 baselines: E1 (EMA=0.995) = 1.1562, C6 = 1.1622
+# Estimated cost: ~$8 for 2xH100 pod (~1.5 hours)
 
 # =============================================================================
 # STEP 0: SETUP (RunPod 2xH100)
@@ -37,6 +36,9 @@ python3 -c "import torch; print(f'CUDA: {torch.version.cuda}')"
 pip install --no-cache-dir \
   "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
 
+# Install lrzip for Phase 3 compression
+apt-get install -y lrzip
+
 # === Download SP8192 dataset ===
 rm -f data/manifest.json
 MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
@@ -58,18 +60,20 @@ print('Preflight PASSED')
 cd ..  # back to DL-Team-Proposal root
 
 # =============================================================================
-# RUN ALL 19 EXPERIMENTS
+# RUN ALL 6 EXPERIMENTS (Phase 1 + 2 + 3)
 # =============================================================================
+# Single script — auto-picks best EMA from Phase 1 for Phase 2-3.
 # Script auto-navigates to parameter-golf/ internally.
 
-bash runs/run_v2_finetune_2gpu.sh
+bash runs/run_v2_session16_2gpu.sh
 
 # =============================================================================
-# AFTER RUNS: ANALYSIS
+# AFTER ALL RUNS
 # =============================================================================
-# 1. Check summary table at the end of the script output
-# 2. Best TTT settings: look for lowest BPB in T1-T9
-# 3. Best QK-Gain: Q1-Q3 vs C6 baseline
-# 4. Best EMA/WD/warmdown: compare to rank 1 defaults
-# 5. If any setting improves by >=0.003 on 2xH100, re-run on 8xH100
-# 6. Copy logs to local machine before terminating pod
+# 1. Check the full summary table at the end
+# 2. Key metrics to compare:
+#    - Phase 1: which EMA beats E1 (1.1562)?
+#    - Phase 2: post-prequant-ttt BPB should drop ~0.06 from pre-Q
+#    - Phase 3: lrzip size vs brotli, emb8 BPB recovery
+# 3. Best config goes to 8xH100 3-seed submission
+# 4. Copy logs to local machine before terminating pod
