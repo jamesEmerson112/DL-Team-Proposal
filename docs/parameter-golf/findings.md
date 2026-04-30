@@ -8,6 +8,8 @@
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
 | *frontier* | *ndokutovich #1967 (N-gram Tilt + LeakyReLU 0.3)* | *~36M* | — | *1.0585* | — | — | — | — | *ref* |
 | *SOTA* | *codemath3000 #1855 (SmearGate+LQER+9HP)* | *~36M* | — | *1.0611* | *~4,930* | — | *int6+lrzip* | *~15.90 MB* | *ref* |
+| P1a★ | V2 C6 + SOTA hparams (6 overrides) | 35.99M | 2.7816 | 1.0769 | 4,587 | — | int6+brotli | 16.35 MB | **No** |
+| P1b★ | V2 C6 + SOTA hparams + NUM_LOOPS=3 | 35.99M | 2.7881 | 1.0793 | 4,126 | — | int6+brotli | 16.36 MB | **No** |
 | **C6●** | **V2 Headwise + emb7+eclip15 (3-seed mean)** | **35.99M** | **2.7910** | **1.0805** | **4,467** | — | **int6+brotli** | **15.70 MB** | **Yes** |
 | L1◆ | V2 C6 + EMA=0.990 (legal) | 35.99M | 2.7976 | 1.0830 | 4,486 | — | int6+brotli | 15.75 MB | Yes |
 | A1● | V2 F1 control (no additions) | 35.94M | 2.7912 | 1.0806 | 4,580 | — | int6+brotli | 15.98 MB | Yes |
@@ -22,6 +24,8 @@
 **Best legal run: C6 (V2 Headwise + emb7+eclip15)** — 3-seed mean **1.0805 BPB**, **-0.1439 below PG baseline**, **+0.0194 above SOTA** (1.0611). 15.70 MB (under budget with 0.30 MB headroom). All 3 seeds under budget, train <600s, eval <600s.
 
 **◆ L1: EMA=0.990 HURT on 8×H100** (+0.0025 vs C6). With only ~4,486 steps, aggressive EMA averages too few checkpoints. **L2: Small Batch + EMA=0.990 HURT EVEN MORE** (+0.0121 vs C6). Despite 13,146 steps (where EMA=0.990 helped on 2×H100), the smaller batch size degrades quality more than extra steps help. EMA tuning does not transfer from 2×H100 to 8×H100 at any batch size.
+
+**★ P1a: SOTA hparams improve BPB by −0.0036 vs C6** (1.0769 vs 1.0805) but over budget (16.35 MB). 6 overrides from PR #1855: WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5. Looser MATRIX_CLIP_SIGMAS (11.5 vs 12.85) is the likely budget-buster. **P1b: NUM_LOOPS=3 hurts** — fewer steps (4,126 vs 4,587), throughput penalty > depth benefit (+0.0024 worse than P1a). Keep NUM_LOOPS=2.
 
 > **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. Legal best: C6 at 1.0805 BPB. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). Current legal SOTA: 1.0611 (codemath3000 PR #1855).
 
@@ -141,6 +145,8 @@ Runs that exceeded the 16 MB budget. Kept for BPB/technique comparison but not s
 **Runs 2-9, 12: SP1024, 10-min wall clock. Runs 2-9: PyTorch 2.11. Run 12: PyTorch 2.6 (18% slower per step). † Runs A, D, H, 13: SP8192, 2×H100, 2026-04-26. † Runs E1-E4: SP8192, 2×H100, 2026-04-27 (elementwise + MQA sweep). ‡ Runs D1-D4, L2, L3, A2: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (benchmark sweep). § Runs Q0, R0-R4: SP8192, 2×H100, GPTQ int7 + train data, 2026-04-28 (GPTQ tuning + ResFormer). ¶ Runs F1-F9: V2 factorial (rank 1 fork + our techniques), SP8192, 2×H100, FA3, int6+brotli, 2026-04-28. ◇ Runs C1-C8: V2 compression tuning (F2 headwise base + compression knob variants), SP8192, 2×H100, FA3, int6+brotli, 2026-04-29. ● Runs C6/A1/A2 (8×H100): V2 C6 submission + ablation, SP8192, 8×H100, PyTorch 2.11+cu130, FA3, int6+brotli, 2026-04-29. All V2 runs: val_bpb = TTT BPB. Size = weights only (code adds 16.6-50 KB depending on LZMA compression).**
 
 **★ Runs P0-P5: Paper #16 (LR Warmup) + Paper #5 (Structured FFN) A/B tests, SP8192, 2×H100, FA3, int6+brotli, 2026-04-30. C6 base config (headwise + emb7+eclip15). LR warmup: all 3 fractions hurt monotonically (more warmup = worse). Structured FFN: dramatic param/size savings (23-25M, 13-14 MB) but BPB degrades by +0.04-0.05. Both techniques FAIL on V2 stack.**
+
+**★ Runs P1a-P1b (8×H100): SOTA hparam adoption Phase 1, SP8192, 8×H100, PyTorch 2.11+cu130, FA3, int6+brotli, 2026-04-30. 6 env-var overrides from PR #1855 (WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5). Both over budget (~16.35 MB) due to looser clip sigmas. P1b ablates NUM_LOOPS=3 (worse).**
 
 ### Ashray's Runs — 2×H100 (rank 4 base, PR #1769)
 
@@ -535,6 +541,37 @@ Ran C6 config (headwise + emb7+eclip15) on 8×H100 for PG submission, plus ablat
 1. **PreQuantTTT is transformative** — takes pre-Q 1.1591 → post-PQ 1.0156 BPB (-0.1435). On 2×H100, post-quant TTT gives **1.0507** — better than our 8×H100 C6 result (1.0805).
 2. R5 crashed at `deserialize()` due to `torch.load(..., weights_only=True)` default in PyTorch 2.11. Fix: add `weights_only=False`.
 3. **Projected 8×H100:** ~0.97-1.00 BPB — would beat current SOTA (1.0136).
+
+### Session 18 — SOTA Hparam Adoption Phase 1 (8×H100, 2026-04-30)
+
+Adopted 6 hyperparameter overrides from SOTA PR #1855 (codemath3000, 1.0611 BPB) into our C6 stack. Zero code changes — env vars only. Also ablated depth recurrence (NUM_LOOPS=3 vs default 2).
+
+**Hparam overrides from PR #1855:**
+
+| Parameter | C6 Value | P1 Value | Source |
+|-----------|----------|----------|--------|
+| WARMDOWN_FRAC | 0.72 | 0.85 | SOTA #1855 |
+| MIN_LR | 0.0 | 0.10 | SOTA #1855 |
+| MATRIX_CLIP_SIGMAS | 12.85 | 11.5 | SOTA #1855 (looser MLP clipping) |
+| EMBED_CLIP_SIGMAS | 15.0 | 14.0 | SOTA #1855 (tighter embed) |
+| BETA2 | 0.95 | 0.99 | SOTA #1855 (AdamW embed/scalar) |
+| GPTQ_RESERVE_SECONDS | 12 | 0.5 | SOTA #1855 (more training time) |
+
+**Results (8×H100, seed 42):**
+
+| Run | Config | Params | Steps | Pre-Q post-EMA BPB | SW BPB | TTT BPB | Size | Budget? |
+|-----|--------|--------|-------|---------------------|--------|---------|------|---------|
+| **P1a** | **C6 + 6 SOTA hparam overrides** | **35.99M** | **4,587** | **1.0844** | **1.0783** | **1.0769** | **16.35 MB** | **No** |
+| P1b | C6 + SOTA hparams + NUM_LOOPS=3 | 35.99M | 4,126 | 1.0874 | 1.0809 | 1.0793 | 16.36 MB | **No** |
+| *C6* | *Reference (3-seed mean)* | *35.99M* | *4,467* | — | — | *1.0805* | *15.70 MB* | *Yes* |
+
+**Key findings:**
+
+1. **SOTA hparams work: −0.0036 BPB vs C6** (P1a 1.0769 vs C6 1.0805). All 6 overrides combined give a meaningful improvement with zero code changes.
+2. **Over budget: 16.35 MB** (P1a) and 16.36 MB (P1b) — both exceed 16,000,000 byte limit. MATRIX_CLIP_SIGMAS=11.5 (looser than C6's 12.85) allows larger weight values that compress worse under brotli. Need to tighten clip sigmas to fit.
+3. **NUM_LOOPS=3 hurts** — P1b (1.0793) is +0.0024 worse than P1a (1.0769). Extra depth recurrence pass (4 passes vs 3) reduces throughput: 4,126 steps vs 4,587 (−10%). The throughput penalty outweighs the depth benefit. Keep NUM_LOOPS=2.
+4. **P1a eval time: 349s** (within 600s limit). P1b eval time: 455s — NUM_LOOPS=3 also slows eval by 30%.
+5. **Next step:** Tighten MATRIX_CLIP_SIGMAS (try 12.0 or 12.5) to fit under 16 MB while retaining most of the BPB gain.
 
 ---
 
@@ -1230,6 +1267,8 @@ _High-level takeaways that apply beyond the competition._
 15. **Headwise gate effect preserved at scale, but compression costs wipe it out** — A3 (headwise, 1.0801) beats A1 (control, 1.0806) by -0.0005 BPB on 8×H100, same delta as 2×H100. But C6's compression tuning (emb7+eclip15) adds +0.0017 BPB cost. Net effect of C6 vs A1: +0.0012 worse. ResFormer (α=0.5) hurts at scale (+0.0022). Need better compression to realize the headwise gate gain within budget.
 16. **EMA=0.990 is optimal** — deeper sweep (Session 16) confirms more aggressive weight averaging helps at this training duration. Nearly 2× the gain of 0.995 (−0.0117 vs −0.0060 below C6). Sweet spot shifts lower with fewer training steps.
 17. **PreQuantTTT is transformative** — 21 epochs AdamW on val before GPTQ gives −0.1435 BPB (1.1591→1.0156 post-PQ). On 2×H100, R4 post-quant TTT (1.0507) beats our 8×H100 C6 (1.0805). Single biggest technique gain in entire project. Projected 8×H100: ~0.97-1.00 BPB.
+18. **SOTA hparam overrides give −0.0036 BPB but bust budget** — 6 env-var-only changes from PR #1855 (WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5) improve P1a to 1.0769 on 8×H100. But looser MATRIX_CLIP_SIGMAS inflates compressed size to 16.35 MB. Need to find clip sigma sweet spot between quality and budget.
+19. **NUM_LOOPS=3 (4 depth recurrence passes) hurts** — P1b (1.0793) is +0.0024 worse than P1a (1.0769). Extra pass costs 10% throughput (4,126 vs 4,587 steps) and 30% longer eval (455s vs 349s). Keep NUM_LOOPS=2.
 
 ## On Metric Choice & Goodhart's Law
 
