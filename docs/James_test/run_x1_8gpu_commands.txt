@@ -22,7 +22,9 @@ pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
 # Install Flash Attention 3 (required for V2, H100 only)
-pip install flash-attn --no-build-isolation
+# NOTE: Do NOT use "pip install flash-attn" — that installs FA2, wrong package.
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
 
 # === 3. Download SP8192 dataset (skip if already done) ===
 rm -f data/manifest.json
