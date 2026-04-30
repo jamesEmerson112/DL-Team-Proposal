@@ -1714,34 +1714,11 @@ class GPT(nn.Module):
         return self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
 
     def forward(self, input_ids: Tensor, target_ids: Tensor) -> Tensor:
-        logits = self._run_backbone(input_ids)
-        if self.training and self.slm_enabled:
-            if Hyperparameters.fused_softcap_ce:
-                per_token_loss = fused_softcapped_cross_entropy(
-                    logits_proj,
-                    target_ids,
-                    self.logit_softcap,
-                    reduction="none",
-                )
-            else:
-                logits = self.softcap_logits(logits_proj)
-                per_token_loss = F.cross_entropy(
-                    logits.reshape(-1, logits.size(-1)).float(),
-                    target_ids.reshape(-1),
-                    reduction="none",
-                )
-            k = max(1, int(per_token_loss.numel() * self.slm_ratio))
-            topk_losses, _ = torch.topk(per_token_loss, k)
-            return topk_losses.mean()
-
+        logits_proj = self._run_backbone(input_ids)
         if Hyperparameters.fused_softcap_ce:
             logits = self.logit_softcap * torch.tanh(logits_proj / self.logit_softcap)
-            return F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)).float(),
-                target_ids.reshape(-1),
-                reduction="mean",
-            )
-        logits = self.softcap_logits(logits_proj)
+        else:
+            logits = self.softcap_logits(logits_proj)
         logits = logits.reshape(-1, logits.size(-1))
         targets = target_ids.reshape(-1)
         # Rho-1 Selective Language Modeling (https://arxiv.org/abs/2401.04056)
