@@ -28,7 +28,7 @@ git pull origin James-experiment
 cd parameter-golf
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-pip install huggingface_hub brotli
+pip install huggingface_hub brotli python-minifier
 pip install --upgrade torch
 python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 
@@ -145,3 +145,119 @@ bash ../runs/run_p3_1851_8gpu.sh
 #   If CaseOps data path is wrong: set DATA_PATH and TOKENIZER_PATH env vars
 #   If OOM from small batch: try TRAIN_BATCH_TOKENS=393216 (2x)
 #   If gated attn hurts: set GATED_ATTN_ENABLED=0 to isolate EMA + small batch
+
+
+# =============================================================================
+# POD 2: SEED 1337 (8xH100)
+# =============================================================================
+# Identical config to Pod 1 (seed 42) except SEED=1337.
+# Uses CASEOPS_ENABLED=0 with regular sp8192 data (matching seed 42 run).
+
+# --- Setup (same as Pod 1) ---
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment
+
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli python-minifier
+pip install --upgrade torch
+
+# Install FlashAttention-3
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# --- Download regular sp8192 data (NOT CaseOps) ---
+python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# --- Preflight ---
+python3 -c "
+from flash_attn_interface import flash_attn_func as fa3
+import brotli
+import torch
+print(f'PyTorch: {torch.__version__}')
+print(f'CUDA: {torch.version.cuda}')
+print(f'GPUs: {torch.cuda.device_count()}')
+assert torch.cuda.device_count() >= 8, f'Need 8 GPUs, found {torch.cuda.device_count()}'
+print('Preflight PASSED')
+"
+
+# --- Run seed 1337 ---
+export CASEOPS_ENABLED=0
+set -a; source ../runs/configs/p3_1851_seed1337.env; set +a
+export CASEOPS_ENABLED=0
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+# --- Results ---
+# Look for: val_bpb line in output
+# Copy log before terminating pod
+
+
+# =============================================================================
+# POD 3: SEED 2025 (8xH100)
+# =============================================================================
+# Identical config to Pod 1 (seed 42) except SEED=2025.
+# Uses CASEOPS_ENABLED=0 with regular sp8192 data (matching seed 42 run).
+
+# --- Setup (same as Pod 1) ---
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment
+
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli python-minifier
+pip install --upgrade torch
+
+# Install FlashAttention-3
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# --- Download regular sp8192 data (NOT CaseOps) ---
+python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# --- Preflight ---
+python3 -c "
+from flash_attn_interface import flash_attn_func as fa3
+import brotli
+import torch
+print(f'PyTorch: {torch.__version__}')
+print(f'CUDA: {torch.version.cuda}')
+print(f'GPUs: {torch.cuda.device_count()}')
+assert torch.cuda.device_count() >= 8, f'Need 8 GPUs, found {torch.cuda.device_count()}'
+print('Preflight PASSED')
+"
+
+# --- Run seed 2025 ---
+export CASEOPS_ENABLED=0
+set -a; source ../runs/configs/p3_1851_seed2025.env; set +a
+export CASEOPS_ENABLED=0
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+# --- Results ---
+# Look for: val_bpb line in output
+# Copy log before terminating pod
+
+
+# =============================================================================
+# 3-SEED AGGREGATION (after all pods complete)
+# =============================================================================
+# Collect val_bpb from each seed's log, compute mean +/- std:
+#
+#   seed42_bpb=X.XXXX
+#   seed1337_bpb=X.XXXX
+#   seed2025_bpb=X.XXXX
+#
+#   python3 -c "
+#   import statistics
+#   bpbs = [$seed42_bpb, $seed1337_bpb, $seed2025_bpb]
+#   print(f'Mean: {statistics.mean(bpbs):.4f}')
+#   print(f'Std:  {statistics.stdev(bpbs):.4f}')
+#   print(f'Beats PR #1851 (1.0613): {statistics.mean(bpbs) < 1.0613}')
+#   "
