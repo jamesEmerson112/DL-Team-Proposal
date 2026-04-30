@@ -241,3 +241,15 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [feat] Updated `runs/configs/v2_base.env` with PreQuantTTT defaults (disabled by default)
 - [edit] Updated `docs/James_test/run_finetune_2gpu_commands.txt` for Session 16
 - [todo] Run Session 16 on 2×H100, then 8×H100 3-seed if results are competitive (~1.015 projected)
+
+### 2026-04-30 (Session 16 — Run Results)
+- [run] Executed 5-run Session 16 sweep on 2×H100 (`run_v2_session16_2gpu.sh`):
+  - Phase 1 EMA Deeper Sweep (R1-R3): EMA=0.990 is new best (R3, TTT 1.1505, -0.0117 vs C6). EMA=0.993 (R2, 1.1526) and EMA=0.995+WD0.10 (R1, 1.1559) also beat E1 (1.1562). EMA keeps improving as decay decreases.
+  - Phase 2-3 PreQuantTTT (R4-R5): R4 (brotli) = **1.0507 TTT BPB** on 2×H100 — beats our 8×H100 C6 (1.0805). PreQuantTTT takes pre-Q 1.1591 → post-PQ 1.0156 (-0.1435 BPB). R5 (pergroup) crashed at deserialize.
+- [bugfix] Fixed `deserialize()` crash in `train_gpt_v2.py`: `torch.load()` needs `weights_only=False` for PyTorch 2.11+ (default changed to `True`)
+- [finding] **EMA=0.990 is optimal** — nearly 2× the gain of 0.995 (-0.0117 vs -0.0060 below C6). Projected 8×H100: ~1.069 BPB
+- [finding] **PreQuantTTT is transformative** — 21 epochs AdamW on val before GPTQ gives -0.1435 BPB. Single biggest technique gain found in entire project
+- [finding] **2×H100 R4 (1.0507) beats 8×H100 C6 (1.0805)** — PreQuantTTT more impactful than 4× GPU scaling
+- [finding] Projected 8×H100 with EMA=0.990 + PreQuantTTT: ~0.97-1.00 BPB — would beat SOTA (1.0136)
+- [edit] Updated `docs/parameter-golf/findings.md`: added Session 16 section, R1-R4 to 2×H100 leaderboard, updated "Where We Stand"
+- [todo] Run 8×H100 3-seed with EMA=0.990 + PreQuantTTT — projected to beat SOTA
