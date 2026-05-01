@@ -14,5 +14,10 @@ pip install --no-cache-dir "https://download.pytorch.org/whl/cu130/flash_attn_3-
 rm -f data/manifest.json
 MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
 
+# Verify no CaseOps symlinks (P1c byte accounting bug)
+ls -la data/datasets/ | grep fineweb10B_sp8192
+ls -la data/ | grep fineweb_8192_bpe
+# Both should be real dirs/files, NOT symlinks (no -> arrow). If symlinked, rm and re-download.
+
 source ../runs/configs/p4_clip12.env
 torchrun --nproc_per_node=8 train_gpt.py

@@ -320,3 +320,15 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [finding] **Best legal run: C6 at 1.0805 BPB** (3-seed mean). Gap to external SOTA (1.0611, PR #1855): +0.0194. P3's techniques (EMA=0.990 + small batch) do NOT help on PR #1851 stack at 8×H100 — consistent with L1/L2 failures on @bigbag stack.
 - [finding] CaseOps byte accounting is a silent trap — `CASEOPS_ENABLED=0` with CaseOps tokenizer inflates byte denominator by ~9% without warning. Must use `CASEOPS_ENABLED=1` with sidecar for correct BPB.
 - [ref] Rerun runbook: `docs/James_test/run_p3_rerun_correct_bytes.txt`
+
+### 2026-05-01 (Session 22 — P3 Corrected Logs + P1c Planning)
+- [feat] Read and analyzed 3 corrected P3 log files (CASEOPS_ENABLED=1, sidecar byte counting): `0d6ec472` (seed 42), `9a386796` (seed 1337), `7a3f8113` (seed 42, incomplete/truncated)
+- [finding] Corrected P3 2-seed results: seed42=1.09724, seed1337=1.09779, mean=1.0975 BPB — confirms +0.0170 worse than C6 (1.0805)
+- [finding] Corrected P3 steps: ~12,140 (due to small batch 196K tokens), but sees FEWER total tokens (~2.4B) than C6 (~3.5B with default 786K batch). More steps ≠ more learning.
+- [finding] PR #1851 base uses default batch (~4,930 steps). The ~12K steps are purely from our small batch override.
+- [feat] Renamed UUID log files: `0d6ec472...` → `p3_corrected_seed42.txt`, `9a386796...` → `p3_corrected_seed1337.txt`, `7a3f8113...` → `p3_corrected_seed42_incomplete.txt`
+- [edit] Updated `docs/James_notes/p1a_vs_p3_comparison.txt`: added run descriptions, P1c column to config table, 2-seed P3 reproducibility section, corrected steps/BPB/size
+- [feat] Created `runs/configs/p4_clip12.env` — P1c config: P1a + MATRIX_CLIP_SIGMAS=12.0 (tightened from 11.5 to fit under 16 MB budget)
+- [edit] Updated `docs/James_test/run_x1_8gpu_commands.txt` — clean pod instructions for P1c run (no comments, just commands)
+- [finding] MATRIX_CLIP_SIGMAS confirmed at `parameter-golf/train_gpt.py:320` — reads from env with default 12.85
+- [todo] Run P1c on 8×H100 pod. Expected: BPB ~1.077-1.080, size <16 MB. If passes → 3-seed for new best legal submission.

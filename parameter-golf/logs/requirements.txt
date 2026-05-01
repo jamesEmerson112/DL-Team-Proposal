@@ -9,4 +9,3 @@ datasets
 tiktoken
 sentencepiece
 brotli
-python-minifier
