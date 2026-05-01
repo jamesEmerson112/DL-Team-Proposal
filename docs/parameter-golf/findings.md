@@ -6,7 +6,8 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
-| **P3●** | **PR #1851 fork + headwise + EMA=0.990 + small batch + emb6 (3-seed mean)** | **35.99M** | — | **1.0066** | **12,382** | — | **int6+brotli** | **~15.97 MB** | **Yes** |
+| ~~P3●~~ | ~~PR #1851 fork + headwise + EMA=0.990 + small batch + emb6 (3-seed mean)~~ | ~~35.99M~~ | — | ~~1.0066~~ | ~~12,382~~ | — | ~~int6+brotli~~ | ~~~15.97 MB~~ | ~~Yes~~ |
+| **P3-fix** | **P3 rerun with CASEOPS_ENABLED=1 (correct byte accounting, seed 42)** | **35.99M** | **2.4012** | **1.0972** | **10,796** | — | **int6+brotli** | **TBD** | **TBD** |
 | *frontier* | *ndokutovich #1967 (N-gram Tilt + LeakyReLU 0.3)* | *~36M* | — | *1.0585* | — | — | — | — | *ref* |
 | *SOTA* | *codemath3000 #1855 (SmearGate+LQER+9HP)* | *~36M* | — | *1.0611* | *~4,930* | — | *int6+lrzip* | *~15.90 MB* | *ref* |
 | P1a★ | V2 C6 + SOTA hparams (6 overrides) | 35.99M | 2.7816 | 1.0769 | 4,587 | — | int6+brotli | 16.35 MB | **No** |
@@ -20,15 +21,15 @@
 | 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | int8+zlib | 19.41 MB | **No** |
 | 11 | SP8192 combo slim + TTT | 16.36M | 3.1197 | 1.2077 | 11,073 | 54ms | int8+zlib | 15.35 MB | Yes |
 
-**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. Current SOTA: 1.0066 BPB (us, P3, PR #2071). Previous SOTA: 1.0611 (codemath3000, PR #1855).**
+**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. SOTA: 1.0611 (codemath3000, PR #1855).**
 
-**Best legal run: P3 (PR #1851 fork + headwise + EMA=0.990 + small batch + emb6)** — 3-seed mean **1.0066 BPB**, **-0.2178 below PG baseline**, **-0.0545 below previous SOTA** (1.0611). ~15.97 MB (under budget). All 3 seeds under budget, train <600s, eval <600s.
+**P3 RETRACTED — byte accounting error.** Original P3 reported 1.0066 BPB but used an inflated byte denominator (CaseOps LUT ~164.6M bytes vs canonical sidecar ~151M bytes). Rerun with `CASEOPS_ENABLED=1` (correct sidecar byte counting) gives **1.0972 BPB** (seed 42) — worse than C6 (1.0805). **Best legal run: C6** (1.0805 BPB, 3-seed mean).
 
 **◆ L1: EMA=0.990 HURT on 8×H100** (+0.0025 vs C6). With only ~4,486 steps, aggressive EMA averages too few checkpoints. **L2: Small Batch + EMA=0.990 HURT EVEN MORE** (+0.0121 vs C6). Despite 13,146 steps (where EMA=0.990 helped on 2×H100), the smaller batch size degrades quality more than extra steps help. EMA tuning does not transfer from 2×H100 to 8×H100 at any batch size.
 
 **★ P1a: SOTA hparams improve BPB by −0.0036 vs C6** (1.0769 vs 1.0805) but over budget (16.35 MB). 6 overrides from PR #1855: WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5. Looser MATRIX_CLIP_SIGMAS (11.5 vs 12.85) is the likely budget-buster. **P1b: NUM_LOOPS=3 hurts** — fewer steps (4,126 vs 4,587), throughput penalty > depth benefit (+0.0024 worse than P1a). Keep NUM_LOOPS=2.
 
-> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. Legal best: P3 at 1.0066 BPB (supersedes C6 1.0805). PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). Current legal SOTA: 1.0066 (us, P3, PR #2071). Previous: 1.0611 (codemath3000 PR #1855).
+> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). **P3 retracted** — byte accounting error (inflated denominator from CaseOps LUT). Corrected P3 = 1.0972 BPB (worse than C6). **Legal best: C6 at 1.0805 BPB.** External SOTA: 1.0611 (codemath3000 PR #1855).
 
 ### 3-Seed Reproducibility — V2 C6 (Headwise + emb7+eclip15), 8×H100
 
@@ -52,7 +53,7 @@
 | **Mean** | **1.0024** | **1.0200** | **1.0066** | **~15,974K** | **Yes** |
 | **Std** | **0.0007** | **0.0009** | **±0.0009** | — | — |
 
-**NEW SOTA.** 12,382 steps in 596s. TTT eval 353-389s. All under 16 MB budget, train <600s, eval <600s. Beats previous legal SOTA (1.0611) by −0.0545 nats.
+**RETRACTED — byte accounting error.** These BPB values used the inflated CaseOps LUT byte denominator (~164.6M) instead of canonical sidecar bytes (~151M). Rerun with `CASEOPS_ENABLED=1` gives seed 42 TTT BPB = **1.0972** (worse than C6 1.0805). The val_loss is real (~2.401) but the BPB conversion was wrong. See "PR #2071 Legality Feedback" section below.
 
 ### 8×H100 Ablation — Technique Contributions (seed 42)
 
@@ -618,24 +619,104 @@ Forked PR #1851 (@aquariouseworkman, 1.0611 BPB) as base. Applied 4 novel contri
 
 **Key findings:**
 
-1. **P3 IS THE NEW SOTA: 1.0066 BPB** — beats legal SOTA (1.0611, codemath3000 PR #1855) by −0.0545 nats. Beats ALL submissions including frontier (1.0585, ndokutovich).
-2. **EMA=0.990 + small batch DO transfer to PR #1851 stack** — unlike C6/@bigbag stack where L1 (EMA=0.990, +0.0025) and L2 (EMA+small batch, +0.0121) both failed. PR #1851's LQER base provides a different training dynamic where aggressive EMA and frequent updates compound.
+1. **~~P3 IS THE NEW SOTA~~ — RETRACTED.** Original 1.0066 BPB was an artifact of inflated byte denominator. Corrected BPB (with `CASEOPS_ENABLED=1` sidecar): **1.0972** (seed 42) — **worse than C6 (1.0805)**. The val_loss (~2.401) is genuine but BPB was computed against ~164.6M CaseOps-transformed bytes instead of ~151M canonical raw bytes.
+2. **EMA=0.990 + small batch do NOT help on PR #1851 stack at 8×H100** — corrected P3 (1.0972) is worse than C6 (1.0805) by +0.0167. Consistent with L1/L2 results on @bigbag stack. The apparent improvement was entirely the byte counting artifact.
 3. **EMBED_BITS=6 trades ~0.013 quant gap for ~1 MB savings** — enables headwise gate to fit under 16 MB (~15.97 MB).
-4. **4 novel contributions stack cleanly** — headwise gate + EMA=0.990 + small batch + emb6 combine without interference on PR #1851 base.
+4. **CaseOps byte accounting is critical** — `CASEOPS_ENABLED=0` with CaseOps tokenizer silently inflates the byte denominator by ~9%. Must use `CASEOPS_ENABLED=1` (loads sidecar) for correct BPB when using CaseOps data.
 
 **Compliance (verified):** train_under_600s (596s), artifact_under_16mb (all <15,976,000), eval_under_600s (353-389s), no_pre_quant_ttt, score_first_ttt, three_seeds (42/1337/2025).
 
 Submitted as PR #2071 to openai/parameter-golf.
 
+### PR #2071 Legality Feedback — Byte Accounting Concern
+
+A reviewer raised a concern about our P3 submission. The issue is **not** probability normalization (C2) or score-after-update (C3) — both are clean. The concern is that the **byte denominator used in BPB calculation may be inflated** due to our hybrid CaseOps setup.
+
+#### The Problem: Two Byte Counting Paths
+
+The evaluation code (`train_gpt.py`) has two byte counting methods:
+
+1. **Sidecar path** (when `caseops_enabled=True`): Loads a pre-computed per-token byte sidecar file (`fineweb_val_bytes_*.bin`) that stores the **canonical raw-text byte budget** for each token. This is the correct denominator — it counts how many raw FineWeb bytes each CaseOps token represents.
+
+2. **LUT path** (when `caseops_enabled=False`): Calls `build_sentencepiece_luts()` which computes byte counts from the tokenizer's vocabulary pieces via `len(piece.encode("utf-8"))`. For a regular SP8192 tokenizer, this gives the correct raw byte count. For a **CaseOps tokenizer**, this gives the byte count of the CaseOps-**transformed** text (which includes case markers), not the raw text.
+
+Our P3 runs used `CASEOPS_ENABLED=0` but loaded the CaseOps tokenizer and CaseOps-tokenized data via symlinks. This means the code took the **LUT path** with a **CaseOps tokenizer**, computing byte counts from CaseOps-transformed pieces rather than raw FineWeb bytes.
+
+#### The Math
+
+From `train_seed42.log`:
+```
+caseops_enabled: False
+val_tokens: 47,851,520
+quantized_ttt_phased val_loss:2.40073153 val_bpb:1.00692894
+```
+
+The BPB formula is: `val_bpb = (val_loss / ln(2)) × (val_tokens / val_bytes)`
+
+Solving for the byte denominator used:
+```
+val_bytes = val_loss / ln(2) × val_tokens / val_bpb
+          = 2.40073153 / 0.693147 × 47,851,520 / 1.00692894
+          ≈ 164,594,398
+```
+
+The reviewer states the canonical raw FineWeb validation byte count is **153,880,891**. If BPB is recomputed against canonical bytes:
+```
+corrected_bpb = 2.40073153 / ln(2) × 47,851,520 / 153,880,891
+              ≈ 1.0770 BPB
+```
+
+This means the **~7% byte inflation** from CaseOps token pieces (`164.6M / 153.9M ≈ 1.070×`) would shift our reported 1.0066 to approximately **1.077 BPB** — close to our C6 result (1.0805) rather than a significant improvement.
+
+#### Why This Affects Only Our Setup
+
+| Setup | Byte Counting | Denominator | Correct? |
+|-------|--------------|-------------|----------|
+| Regular SP8192 + `CASEOPS_ENABLED=0` | LUT from regular tokenizer | Raw bytes | Yes |
+| CaseOps + `CASEOPS_ENABLED=1` (PR #1851 default) | Sidecar file | Canonical raw bytes | Yes |
+| **CaseOps data + `CASEOPS_ENABLED=0` (our P3)** | **LUT from CaseOps tokenizer** | **CaseOps-transformed bytes** | **No — inflated** |
+
+The CaseOps tokenizer's vocabulary pieces encode CaseOps-transformed text (lowercase + case markers). When `build_sentencepiece_luts()` counts `len(piece.encode("utf-8"))` for these pieces, it includes the bytes from case markers that don't exist in the raw text. The sidecar exists precisely to provide the correct raw byte count for each CaseOps token, but our `CASEOPS_ENABLED=0` flag bypassed it.
+
+PR #1851's own runs use `CASEOPS_ENABLED=1` and load the sidecar, so they have the correct byte denominator. Other non-CaseOps submissions use the regular tokenizer's LUT, which also gives correct raw byte counts. Our hybrid setup is the only configuration that produces an inflated denominator.
+
+#### What's NOT Affected
+
+The reviewer confirmed:
+- **No C2 violation** — eval uses standard `F.cross_entropy()` over full vocab; fused CE uses normal log-sum-exp. Probability distributions are properly normalized.
+- **No C3 violation** — phased TTT scores tokens under `torch.no_grad()` BEFORE LoRA gradient updates. Score-first ordering is correct.
+- **The model quality is real** — the cross-entropy loss (`val_loss = 2.4007`) is genuinely good. The issue is purely how that loss is converted to BPP via the byte denominator.
+
+#### Rerun Results (2026-05-01) — CONFIRMED
+
+Reran P3 with `CASEOPS_ENABLED=1` + explicit `DATA_PATH` + byte sidecar file downloaded from `romeerp/parameter-golf-caseops-v1`. No symlinks. Sidecar file provides canonical raw byte counts per token.
+
+**Seed 42 rerun:**
+```
+caseops_enabled: True
+diagnostic pre-quantization post-ema val_loss:2.39422591 val_bpb:1.09399677
+quantized_ttt_phased val_loss:2.40115802 val_bpb:1.09723551 eval_time:459203ms
+```
+
+| Metric | Original P3 (inflated) | Corrected P3 (sidecar) | Delta |
+|--------|----------------------|----------------------|-------|
+| val_loss (TTT) | 2.4007 | 2.4012 | ~same |
+| val_bpb (TTT) | **1.0069** | **1.0972** | **+0.0903** |
+| Byte denominator | ~164.6M (LUT) | ~151M (sidecar) | -8.3% |
+
+The val_loss is essentially identical — confirming the model quality didn't change. The entire BPB difference is from the byte denominator correction.
+
+**Corrected P3 (1.0972) is worse than C6 (1.0805) by +0.0167.** The reviewer was correct — the original 1.0066 was an artifact of the inflated byte count. The reviewer's estimate (~1.077) was directionally correct but slightly off because their assumed canonical byte count (153.9M) differs from the actual sidecar total (~151M).
+
 ---
 
-**Current SOTA:** 1.0066 BPB (us, P3, PR #2071) — PR #1851 fork + headwise gated attention + EMA=0.990 + small batch + EMBED_BITS=6. Previous SOTA: 1.0611 (codemath3000, PR #1855).
+**Our best legal run: C6 at 1.0805 BPB** (3-seed mean). P3 retracted due to byte accounting error. External SOTA: 1.0611 (codemath3000, PR #1855).
 
 ### Official Leaderboard (as of 2026-04-30)
 
 | Rank | BPB | Author | Key Techniques |
 |-----:|------:|--------|---------------|
-| **NEW** | **1.0066** | **Us (P3, PR #2071, 3-seed mean)** | **PR #1851 fork + headwise gate + EMA=0.990 + small batch + emb6** |
+| ~~NEW~~ | ~~1.0066~~ | ~~Us (P3, PR #2071)~~ | ~~RETRACTED — inflated byte denominator. Corrected: 1.0972~~ |
 | 1 | 1.0585 | ndokutovich (#1967) | N-gram Tilt + LeakyReLU 0.3 |
 | 2 | 1.0586 | andrewbaggio1 (#1953) | Long-context 2560 + no_qv TTT mask + QK_GAIN 5.25 |
 | 3 | 1.0593 | alertcat (#1945) | AWQ-lite + Asymmetric Logit Rescale |
@@ -653,12 +734,11 @@ Submitted as PR #2071 to openai/parameter-golf.
 
 ### Where We Stand
 
-- **OUR P3 IS THE NEW SOTA: 1.0066 BPB** (3-seed mean, std ±0.0009)
-- **Beats SOTA (1.0611, PR #1855):** −0.0545 nats
-- **Gap to baseline (1.2244):** −0.2178 BPB
-- **Config:** PR #1851 (@aquariouseworkman) fork + headwise gated attention + EMA=0.990 + small batch (196K tokens) + EMBED_BITS=6
-- **All 3 seeds under 16 MB budget** (~15.97 MB), training under 600s, eval under 600s
-- **Previous C6 (1.0805):** now superseded by P3
+- **P3 RETRACTED** — original 1.0066 BPB was artifact of inflated byte denominator. Corrected: **1.0972 BPB** (seed 42, worse than C6)
+- **Our best legal run: C6 at 1.0805 BPB** (3-seed mean, std ±0.0012)
+- **Gap to external SOTA (1.0611, PR #1855):** +0.0194 BPB (we are behind)
+- **Gap to baseline (1.2244):** −0.1439 BPB
+- **Lesson learned:** CaseOps byte accounting requires `CASEOPS_ENABLED=1` with sidecar file for correct BPB. Symlink + `CASEOPS_ENABLED=0` silently inflates denominator by ~9%.
 
 ### Submission Strategy
 
@@ -1313,9 +1393,10 @@ _High-level takeaways that apply beyond the competition._
 17. **PreQuantTTT is transformative** — 21 epochs AdamW on val before GPTQ gives −0.1435 BPB (1.1591→1.0156 post-PQ). On 2×H100, R4 post-quant TTT (1.0507) beats our 8×H100 C6 (1.0805). Single biggest technique gain in entire project. Projected 8×H100: ~0.97-1.00 BPB.
 18. **SOTA hparam overrides give −0.0036 BPB but bust budget** — 6 env-var-only changes from PR #1855 (WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5) improve P1a to 1.0769 on 8×H100. But looser MATRIX_CLIP_SIGMAS inflates compressed size to 16.35 MB. Need to find clip sigma sweet spot between quality and budget.
 19. **NUM_LOOPS=3 (4 depth recurrence passes) hurts** — P1b (1.0793) is +0.0024 worse than P1a (1.0769). Extra pass costs 10% throughput (4,126 vs 4,587 steps) and 30% longer eval (455s vs 349s). Keep NUM_LOOPS=2.
-20. **P3 beats SOTA** — PR #1851 fork + 4 novel contributions (headwise gate, EMA=0.990, small batch, emb6) = 1.0066 BPB (3-seed mean). Beats legal SOTA (1.0611) by −0.0545 nats. Beats ALL frontier submissions including 1.0585 (ndokutovich). Submitted as PR #2071.
+20. **P3 RETRACTED — byte accounting error confirmed.** Original 1.0066 BPB was artifact of inflated byte denominator. `CASEOPS_ENABLED=0` + CaseOps tokenizer used LUT byte counting (~164.6M) instead of sidecar (~151M). Rerun with `CASEOPS_ENABLED=1` gives **1.0972 BPB** (seed 42) — worse than C6 (1.0805) by +0.0167. The val_loss (~2.401) was real but the BPB conversion was wrong. Root cause: symlink setup on pod loaded CaseOps tokenizer but bypassed byte sidecar.
 21. **EMBED_BITS=6 trades ~0.013 quant gap for ~1 MB savings** — C2 (emb6, 2×H100) was 1.1735 vs C6 (emb7, 1.1622), +0.0113 gap. But the ~1 MB savings enables headwise gate to fit comfortably under 16 MB (~15.97 MB vs ~15.99 MB with emb7).
-22. **EMA=0.990 + small batch transfer to PR #1851 stack** — unlike C6/@bigbag stack where L1 (EMA=0.990) hurt (+0.0025) and L2 (EMA+small batch) hurt more (+0.0121), these techniques work on PR #1851's LQER base. Different training dynamics: LQER's quantization-aware residuals create a regime where aggressive EMA and frequent updates compound rather than conflict.
+22. **EMA=0.990 + small batch do NOT transfer to PR #1851 stack at 8×H100** — corrected P3 (1.0972) is worse than C6 (1.0805). The apparent "transfer" in the original P3 was entirely the byte counting artifact. Consistent with L1/L2 results on @bigbag stack: aggressive EMA + small batch hurt at 8×H100 scale regardless of base stack.
+23. **CaseOps byte accounting is a silent trap** — `CASEOPS_ENABLED=0` with CaseOps tokenizer (via symlink) inflates the byte denominator by ~9% without any warning. The code produces plausible-looking BPB numbers that are systematically too low. Must use `CASEOPS_ENABLED=1` with sidecar file for correct reporting. This was the single most costly mistake of the project.
 
 ## On Metric Choice & Goodhart's Law
 

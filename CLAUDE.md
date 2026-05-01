@@ -289,3 +289,34 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [finding] bigbag is no longer rank 1 — updated all references to remove "rank 1 SOTA"
 - [ref] PR: https://github.com/openai/parameter-golf/pull/2005
 - [ref] pg-fork clone at /tmp/pg-fork (ephemeral, not persisted locally)
+
+### 2026-05-01 (Session 20)
+- [edit] Updated `docs/parameter-golf/findings.md` with P3 SOTA results:
+  - Added P3 row to 8×H100 table (1.0066 BPB, 12,382 steps, ~15.97 MB)
+  - Updated SOTA references: 1.0066 (us, P3, PR #2071), previous 1.0611 (codemath3000)
+  - Added P3 3-seed reproducibility table (mean 1.0066 ±0.0009)
+  - Added Session 19 — P3 SOTA Runs (config table, 3-seed results, key findings, compliance)
+  - Restructured Official Leaderboard table — P3 at top as NEW
+  - Updated Key Insights #8 ($1,165/130+), #10 (P3 IS SOTA), added #20-22
+- [edit] Updated `docs/parameter-golf/neurlps-paper-survey.md`: header, leaderboard table, Paper #15, Techniques in Use — all reflect P3 1.0066 SOTA
+- [edit] Updated `docs/James_notes/pr2005_supplement.md`: EMA/Small Batch/Transfer sections with P3 data, fixed all "rank 1" → "@bigbag" (7 occurrences), experiment scale 130+/$1,165
+- [finding] **CaseOps data was actually used in P3** — pod had symlinks pointing standard SP8192 paths to CaseOps-tokenized data, even though `CASEOPS_ENABLED=0` was set. Updated all docs + pg-fork PR to reflect "CaseOps ON (via symlinked data)"
+- [feat] Updated pg-fork PR #2071: fixed CaseOps status, added full reproduction steps (download from romeerp/parameter-golf-caseops-v1 + symlink commands), updated PR description and acknowledgements
+- [finding] P3 logs ARE complete (4,112-4,120 lines per seed) — reviewer saw GitHub diff view truncation, not actual truncation
+- [research] Reviewed competing PRs: #2098 (0.80051, PPM+TTT), #2083 (0.94175, PPM no TTT), #2066 (SSM hybrid, non-record) — PPM submissions likely C2 violations per PR #1905 mathematical proof
+- [finding] P3 is the strongest pure neural network submission — no PPM, no byte mixing, clean C2 compliance
+- [ref] PR #2071: https://github.com/openai/parameter-golf/pull/2071
+
+### 2026-05-01 (Session 21 — P3 Byte Accounting Retraction)
+- [research] Investigated reviewer's byte accounting concern for PR #2071 (P3 submission). Traced full code path: `CASEOPS_ENABLED=0` + CaseOps tokenizer via symlink → `build_sentencepiece_luts()` at line 474 → LUT byte counting in `_accumulate_bpb()` at line 2691 → inflated byte denominator (~164.6M CaseOps-transformed bytes vs ~151M canonical raw bytes)
+- [finding] **P3 RETRACTED — byte accounting error confirmed.** Original 1.0066 BPB was artifact of inflated byte denominator. Rerun with `CASEOPS_ENABLED=1` (sidecar byte counting) gives **1.0972 BPB** (seed 42) — worse than C6 (1.0805) by +0.0167. val_loss (~2.401) was identical, confirming the issue was purely the byte denominator, not model quality.
+- [finding] Root cause: on the pod, standard paths were symlinked to CaseOps data (`ln -s fineweb10B_sp8192_lossless_caps_caseops_v1_reserved data/datasets/fineweb10B_sp8192`). With `CASEOPS_ENABLED=0`, code loaded CaseOps tokenizer but skipped sidecar file, using LUT byte counting that includes case marker bytes not present in raw text.
+- [finding] Confirmed sidecar file exists in `romeerp/parameter-golf-caseops-v1` HF repo: `datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin` (1 sidecar for 1 val shard)
+- [finding] Download script (`data/cached_challenge_fineweb.py`) has a gap — it downloads token shards but NOT `fineweb_val_bytes_*.bin` sidecar files. Must download sidecar manually.
+- [finding] Default `_default_caseops_data` path in `train_gpt.py` (line 381-388) doesn't match where the download script puts data. Must set `DATA_PATH` explicitly when using `CASEOPS_ENABLED=1`.
+- [bugfix] Permission error during GPTQ calibration: `fineweb_train_000067.bin` had restrictive permissions from HF cache hard-links. Fixed with `chmod +r`.
+- [feat] Created `docs/James_test/run_p3_rerun_correct_bytes.txt` — runbook for rerunning P3 with correct byte accounting (CASEOPS_ENABLED=1 + explicit DATA_PATH + sidecar download)
+- [edit] Major update to `docs/parameter-golf/findings.md`: P3 retracted throughout — 8×H100 table, summary, compliance note, 3-seed table, Session 19 findings, legality feedback (added rerun results), leaderboard, Where We Stand, Key Insights #20/#22/#23. Best legal run reverted to C6 (1.0805).
+- [finding] **Best legal run: C6 at 1.0805 BPB** (3-seed mean). Gap to external SOTA (1.0611, PR #1855): +0.0194. P3's techniques (EMA=0.990 + small batch) do NOT help on PR #1851 stack at 8×H100 — consistent with L1/L2 failures on @bigbag stack.
+- [finding] CaseOps byte accounting is a silent trap — `CASEOPS_ENABLED=0` with CaseOps tokenizer inflates byte denominator by ~9% without warning. Must use `CASEOPS_ENABLED=1` with sidecar for correct BPB.
+- [ref] Rerun runbook: `docs/James_test/run_p3_rerun_correct_bytes.txt`

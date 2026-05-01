@@ -1,0 +1,180 @@
+# P3 Rerun with Correct Byte Accounting
+# ======================================
+# Purpose: Fix the inflated byte denominator from CASEOPS_ENABLED=0 + CaseOps tokenizer symlink.
+# The original P3 used LUT byte counting (~164.6M bytes) instead of canonical raw bytes (~153.9M).
+# This rerun uses CASEOPS_ENABLED=1 + sidecar files for correct BPB.
+#
+# Hardware: 8xH100 SXM (RunPod or similar)
+# Estimated time: ~15 min setup + 10 min train + 7 min eval per seed
+# Seeds: 42, 1337, 2025
+#
+# Confirmed: romeerp/parameter-golf-caseops-v1 HAS the sidecar file:
+#   datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin
+# Only 1 val shard + 1 sidecar file in the repo. No need for local regeneration.
+
+# =============================================================================
+# STEP 0: Environment setup (same as original P3)
+# =============================================================================
+
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal && git checkout James-experiment
+cd parameter-golf
+
+pip install --upgrade torch
+pip install brotli sentencepiece numpy python-minifier
+pip install huggingface_hub
+pip install --no-cache-dir "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# =============================================================================
+# STEP 1: Download CaseOps data (token shards + tokenizer)
+# =============================================================================
+
+MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
+  MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
+  python3 data/cached_challenge_fineweb.py \
+    --variant sp8192_lossless_caps_caseops_v1_reserved \
+    --train-shards 80
+
+# =============================================================================
+# STEP 2: Download the byte sidecar file (not fetched by the download script)
+# =============================================================================
+
+python3 -c "
+from huggingface_hub import hf_hub_download
+import shutil, os
+
+cached = hf_hub_download(
+    repo_id='romeerp/parameter-golf-caseops-v1',
+    filename='fineweb_val_bytes_000000.bin',
+    subfolder='datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved',
+    repo_type='dataset',
+)
+dest = 'data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin'
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+try:
+    os.link(os.path.realpath(cached), dest)
+except OSError:
+    shutil.copy2(os.path.realpath(cached), dest)
+print(f'Sidecar file saved to: {dest}')
+print(f'Size: {os.path.getsize(dest):,} bytes')
+"
+
+# =============================================================================
+# STEP 3: Preflight check
+# =============================================================================
+
+CASEOPS_DATA_DIR=./data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
+
+# Fix HF cache hard-link permissions (GPTQ calibration needs to read train shards)
+chmod +r ${CASEOPS_DATA_DIR}/fineweb_train_*.bin
+chmod +r ${CASEOPS_DATA_DIR}/fineweb_val_*.bin
+
+echo "=== Preflight Check ==="
+echo "Token shards:"
+ls ${CASEOPS_DATA_DIR}/fineweb_val_*.bin 2>/dev/null | grep -v bytes | wc -l
+echo "Sidecar files:"
+ls ${CASEOPS_DATA_DIR}/fineweb_val_bytes_*.bin 2>/dev/null | wc -l
+echo "Train shards:"
+ls ${CASEOPS_DATA_DIR}/fineweb_train_*.bin 2>/dev/null | wc -l
+echo "Tokenizer:"
+ls data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model 2>/dev/null \
+  && echo "OK" || echo "MISSING"
+echo "GPUs:"
+python3 -c "import torch; print(torch.cuda.device_count())"
+echo "FA3:"
+python3 -c "import flash_attn_3_cuda" 2>/dev/null && echo "OK" || echo "MISSING"
+
+# Expected: 1 val shard, 1 sidecar, 80 train shards, tokenizer OK, 8 GPUs, FA3 OK
+
+# =============================================================================
+# STEP 4: Run P3 with CASEOPS_ENABLED=1 (seed 42)
+# =============================================================================
+
+CASEOPS_ENABLED=1 \
+DATA_PATH=./data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved \
+TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model \
+SEED=42 GATED_ATTN_ENABLED=1 SPARSE_ATTN_GATE_ENABLED=0 \
+EMA_DECAY=0.990 GRAD_ACCUM_STEPS=1 TRAIN_BATCH_TOKENS=196608 EMBED_BITS=6 \
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+# =============================================================================
+# STEP 5: Verify correct byte accounting in the log
+# =============================================================================
+
+# Check the log for:
+#   1. caseops_enabled: True          (NOT False)
+#   2. No FileNotFoundError for sidecar
+#   3. Byte denominator should be ~153.9M, NOT ~164.6M
+
+python3 -c "
+import math
+# Replace these with actual values from the log:
+val_loss = 0.0       # from: quantized_ttt_phased val_loss:X.XXXXXXXX
+val_bpb = 0.0        # from: quantized_ttt_phased val_bpb:X.XXXXXXXX
+val_tokens = 47851520  # from: val_tokens: XXXXXXXX
+byte_denom = val_loss / math.log(2) * val_tokens / val_bpb
+print(f'Byte denominator: {byte_denom:,.0f}')
+print(f'Expected canonical: ~153,880,891')
+print(f'Old inflated:      ~164,594,398')
+if abs(byte_denom - 153880891) < 1000000:
+    print('CORRECT - using canonical raw bytes')
+elif abs(byte_denom - 164594398) < 1000000:
+    print('WRONG - still using inflated CaseOps bytes!')
+else:
+    print(f'UNEXPECTED value - investigate')
+"
+
+# =============================================================================
+# STEP 6: Run seeds 1337 and 2025
+# =============================================================================
+
+CASEOPS_ENABLED=1 \
+DATA_PATH=./data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved \
+TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model \
+SEED=1337 GATED_ATTN_ENABLED=1 SPARSE_ATTN_GATE_ENABLED=0 \
+EMA_DECAY=0.990 GRAD_ACCUM_STEPS=1 TRAIN_BATCH_TOKENS=196608 EMBED_BITS=6 \
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+CASEOPS_ENABLED=1 \
+DATA_PATH=./data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved \
+TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model \
+SEED=2025 GATED_ATTN_ENABLED=1 SPARSE_ATTN_GATE_ENABLED=0 \
+EMA_DECAY=0.990 GRAD_ACCUM_STEPS=1 TRAIN_BATCH_TOKENS=196608 EMBED_BITS=6 \
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+# =============================================================================
+# STEP 7: Compute 3-seed mean
+# =============================================================================
+
+python3 -c "
+import math
+# Replace with actual TTT BPB from each seed's log:
+bpbs = [0.0, 0.0, 0.0]  # seed42, seed1337, seed2025
+mean = sum(bpbs) / len(bpbs)
+std = (sum((x - mean)**2 for x in bpbs) / len(bpbs)) ** 0.5
+print(f'3-seed mean BPB: {mean:.4f} (std {std:.4f})')
+print(f'Old P3 (inflated): 1.0066')
+print(f'C6 reference:      1.0805')
+if mean < 1.0805:
+    print(f'IMPROVEMENT over C6: -{1.0805 - mean:.4f}')
+else:
+    print(f'Worse than C6 by: +{mean - 1.0805:.4f}')
+"
+
+# =============================================================================
+# NOTES
+# =============================================================================
+#
+# What changed vs original P3:
+#   OLD: CASEOPS_ENABLED=0, symlinked CaseOps data, LUT byte counting (inflated)
+#   NEW: CASEOPS_ENABLED=1, explicit DATA_PATH, sidecar byte counting (canonical)
+#
+# The training should be identical (same tokenized data, same model, same hparams).
+# Only the BPB REPORTING changes — the byte denominator is corrected.
+# val_loss should be approximately the same as original P3 (~2.4007 for seed 42).
+# val_bpb will be higher (corrected) — expected ~1.077 if reviewer's canonical
+# byte count (153,880,891) is correct.
+#
+# If the corrected BPB is still < 1.0805 (C6), then the 4 novel techniques
+# (headwise gate, EMA=0.990, small batch, emb6) DO provide genuine improvement
+# on the PR #1851 stack, just not as dramatic as originally reported.
