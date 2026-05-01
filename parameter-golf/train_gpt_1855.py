@@ -371,7 +371,7 @@ class Hyperparameters:
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     is_main_process = rank == 0
-    grad_accum_steps = int(os.environ.get("GRAD_ACCUM_STEPS", 8 // world_size))
+    grad_accum_steps = 8 // world_size
     # CaseOps integration: optional override of dataset root + tokenizer path.
     # When CASEOPS_ENABLED=1, the wrapper loads a per-token byte sidecar
     # (fineweb_val_bytes_*.bin, identical shard layout to val_*.bin) and uses
@@ -455,15 +455,17 @@ class ValidationData:
                 f"VOCAB_SIZE={h.vocab_size} does not match tokenizer vocab_size={int(self.sp.vocab_size())}"
             )
         self.val_tokens = load_validation_tokens(h.val_files, h.eval_seq_len)
-        (
-            self.base_bytes_lut,
-            self.has_leading_space_lut,
-            self.is_boundary_token_lut,
-        ) = build_sentencepiece_luts(self.sp, h.vocab_size, device)
-        # CaseOps: when enabled, load per-token byte sidecar and stash it as a
-        # CPU tensor aligned 1:1 with self.val_tokens. eval_val/eval_val_ttt
-        # branches use this as the canonical raw-byte budget per token.
         self.caseops_enabled = bool(getattr(h, "caseops_enabled", False))
+        if self.caseops_enabled:
+            self.base_bytes_lut = None
+            self.has_leading_space_lut = None
+            self.is_boundary_token_lut = None
+        else:
+            (
+                self.base_bytes_lut,
+                self.has_leading_space_lut,
+                self.is_boundary_token_lut,
+            ) = build_sentencepiece_luts(self.sp, h.vocab_size, device)
         self.val_bytes = None
         if self.caseops_enabled:
             self.val_bytes = load_validation_byte_sidecar(
@@ -627,7 +629,7 @@ class DocumentPackingLoader:
         self._init_shard(load_data_shard(next(self.file_iter)))
         self._next_shard = self._submit_next_shard()
         self._batch_pool = ThreadPoolExecutor(1)
-        self._next_batch = None
+        self._prefetch_queue = []
 
     def _init_shard(self, tokens):
         global BOS_ID
@@ -668,8 +670,10 @@ class DocumentPackingLoader:
             self._advance_shard()
         local_start = self.cursor + self.rank * per_rank_span
         buf = self.tokens[local_start : local_start + per_rank_span]
-        inputs = buf[:-1].to(dtype=torch.int64).pin_memory()
-        targets = buf[1:].to(dtype=torch.int64).pin_memory()
+        inputs = torch.empty(per_rank_span - 1, dtype=torch.int64, pin_memory=True)
+        targets = torch.empty(per_rank_span - 1, dtype=torch.int64, pin_memory=True)
+        inputs.copy_(buf[:-1])
+        targets.copy_(buf[1:])
         starts = self._local_doc_starts(local_start, inputs.numel())
         cu_seqlens, max_seqlen = _build_cu_seqlens(
             starts, inputs.numel(), inputs.device, max_seq_len, self.cu_bucket_size
@@ -680,15 +684,12 @@ class DocumentPackingLoader:
 
     def next_batch(self, global_tokens, grad_accum_steps):
         num_tokens_local = global_tokens // (self.world_size * grad_accum_steps)
-        if self._next_batch is not None:
-            inputs, targets, cu_seqlens, max_seqlen = self._next_batch.result()
-        else:
-            inputs, targets, cu_seqlens, max_seqlen = self._prepare_batch(
-                num_tokens_local, self.max_seq_len
-            )
-        self._next_batch = self._batch_pool.submit(
-            self._prepare_batch, num_tokens_local, self.max_seq_len
-        )
+        while len(self._prefetch_queue) < 2:
+            self._prefetch_queue.append(
+                self._batch_pool.submit(self._prepare_batch, num_tokens_local, self.max_seq_len))
+        inputs, targets, cu_seqlens, max_seqlen = self._prefetch_queue.pop(0).result()
+        self._prefetch_queue.append(
+            self._batch_pool.submit(self._prepare_batch, num_tokens_local, self.max_seq_len))
         return (
             inputs[None].to(self.device, non_blocking=True),
             targets[None].to(self.device, non_blocking=True),
@@ -831,7 +832,7 @@ def linear_leaky_relu_square(a, b, aux=None):
     if aux is None:
         aux = torch.empty((M, N), device=a.device, dtype=a.dtype)
     num_sms = torch.cuda.get_device_properties(a.device).multi_processor_count
-    BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K = 128, 256, 64
+    BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K = 256, 128, 64
     num_stages = 4 if forward else 3
     a_desc = TensorDescriptor.from_tensor(a, [BLOCK_SIZE_M, BLOCK_SIZE_K])
     b_desc = TensorDescriptor.from_tensor(b, [BLOCK_SIZE_N, BLOCK_SIZE_K])
@@ -1324,17 +1325,16 @@ class GPT(nn.Module):
         """Run the encoder/decoder stack to the final RMSNorm; returns pre-projection hidden.
         Shared by eval (softcap+projection via forward_logits) and train (fused CE path)."""
         x = self.tok_emb(input_ids)
-        # SmearGate (PR #1667). Inline gate compute with .contiguous() on the slice fed
-        # to the projection so torch.compile fullgraph is happy. lam=0 + W=0 -> identity
-        # at init. This block runs unconditionally on the smear path; the cat keeps
-        # position 0 untouched so causality holds.
+        # SmearGate (PR #1667). lam=0 + W=0 -> identity at init.
+        # Cross-doc leak fix: zero the prev-token smear at any position whose current token
+        # is BOS, so the BOS embedding starting doc N+1 in a packed stream is not
+        # contaminated by doc N's last token (audited issue on PR#1797 base).
         if self.smear_gate_enabled:
             sl = self.smear_lambda.to(dtype=x.dtype)
             gate_in = x[:, 1:, : self.smear_window].contiguous()
             g = sl * torch.sigmoid(self.smear_gate(gate_in))
-            bos_mask = (input_ids[:, 1:] == 1).unsqueeze(-1)
-            g = g.masked_fill(bos_mask, 0.0)
-            x = torch.cat([x[:, :1], x[:, 1:] + g * x[:, :-1]], dim=1)
+            not_bos = (input_ids[:, 1:] != BOS_ID).to(x.dtype).unsqueeze(-1)
+            x = torch.cat([x[:, :1], x[:, 1:] + g * x[:, :-1] * not_bos], dim=1)
         x = F.rms_norm(x, (x.size(-1),))
         x0 = x
         skips = []
@@ -1427,13 +1427,13 @@ class GPT(nn.Module):
     def forward_ttt(self, input_ids, target_ids, lora):
         x = self.tok_emb(input_ids)
         # SmearGate on the TTT path — same inline compute as forward_logits.
+        # Cross-doc leak fix: see _forward_hidden comment.
         if self.smear_gate_enabled:
             sl = self.smear_lambda.to(dtype=x.dtype)
             gate_in = x[:, 1:, : self.smear_window].contiguous()
             g = sl * torch.sigmoid(self.smear_gate(gate_in))
-            bos_mask = (input_ids[:, 1:] == 1).unsqueeze(-1)
-            g = g.masked_fill(bos_mask, 0.0)
-            x = torch.cat([x[:, :1], x[:, 1:] + g * x[:, :-1]], dim=1)
+            not_bos = (input_ids[:, 1:] != BOS_ID).to(x.dtype).unsqueeze(-1)
+            x = torch.cat([x[:, :1], x[:, 1:] + g * x[:, :-1] * not_bos], dim=1)
         x = F.rms_norm(x, (x.size(-1),))
         x0 = x
         skips = []
@@ -1809,9 +1809,7 @@ class Muon(torch.optim.Optimizer):
                 self._rs_futures.append(None)
                 continue
             pg = m["padded_grad"]
-            pg[: m["B"]].copy_(p.grad.bfloat16())
-            if pg.shape[0] > m["B"]:
-                pg[m["B"] :].zero_()
+            pg[: m["B"]].copy_(p.grad)
             fut = dist.reduce_scatter_tensor(
                 m["shard"], pg, op=dist.ReduceOp.AVG, async_op=True
             )
@@ -1845,7 +1843,7 @@ class Muon(torch.optim.Optimizer):
                     upd = prev_m["full_update"][: prev_m["B"]]
                     if wd > 0.0:
                         pp.data.mul_(1.0 - lr * wd)
-                    pp.add_(upd.to(dtype=pp.dtype), alpha=-lr * prev_m["scale"])
+                    pp.add_(upd, alpha=-lr * prev_m["scale"])
                 if sharded and self._rs_futures[idx] is not None:
                     self._rs_futures[idx].wait()
                     g = m["shard"]
@@ -1873,14 +1871,14 @@ class Muon(torch.optim.Optimizer):
                 else:
                     if wd > 0.0:
                         p.data.mul_(1.0 - lr * wd)
-                    p.add_(update.to(dtype=p.dtype), alpha=-lr * m["scale"])
+                    p.add_(update, alpha=-lr * m["scale"])
             if prev_ag_handle is not None:
                 prev_ag_handle.wait()
                 pp = prev_m["p"]
                 upd = prev_m["full_update"][: prev_m["B"]]
                 if wd > 0.0:
                     pp.data.mul_(1.0 - lr * wd)
-                pp.add_(upd.to(dtype=pp.dtype), alpha=-lr * prev_m["scale"])
+                pp.add_(upd, alpha=-lr * prev_m["scale"])
             if hasattr(self, "_rs_futures"):
                 del self._rs_futures
         return loss
@@ -1969,6 +1967,7 @@ class Optimizers:
                 self.replicated_packed_params.append(p)
             else:
                 self.replicated_large_params.append(p)
+        self._aux_stream = torch.cuda.Stream()
 
     def __iter__(self):
         return iter(self.optimizers)
@@ -2011,9 +2010,12 @@ class Optimizers:
             self._all_reduce_packed_grads()
             for handle in reduce_handles:
                 handle.wait()
-        self.optimizer_tok.step()
-        self.optimizer_scalar.step()
+        self._aux_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(self._aux_stream):
+            self.optimizer_tok.step()
+            self.optimizer_scalar.step()
         self.optimizer_muon.step()
+        torch.cuda.current_stream().wait_stream(self._aux_stream)
         self.zero_grad_all()
 
 
@@ -2347,59 +2349,225 @@ def dequantize_mixed(result, meta, template_sd):
 _BSHF_MAGIC = b"BSHF"
 
 
-def _byte_shuffle(data, stride=2):
-    if stride <= 1 or len(data) < stride:
-        return data
-    src = np.frombuffer(data, dtype=np.uint8)
-    n = len(src)
-    out = np.empty(n, dtype=np.uint8)
-    dest_off = 0
-    for pos in range(stride):
-        chunk = src[pos::stride]
-        out[dest_off : dest_off + len(chunk)] = chunk
-        dest_off += len(chunk)
-    return _BSHF_MAGIC + bytes([stride]) + out.tobytes()
+# ── Per-group lrzip compression (ported from PR#1586 via PR#1667/1729) ────────
+
+_GROUP_ORDER = [
+    "_tok_emb.weight.q",
+    "attn.c_k.weight.q", "attn.c_q.weight.q",
+    "attn.c_v.weight.q", "attn.proj.weight.q",
+    "mlp.fc.weight.q", "mlp.proj.weight.q",
+]
+_SIMSORT_KEYS = {"_tok_emb.weight.q", "attn.c_q.weight.q", "mlp.fc.weight.q"}
+_PACK_MAGIC = b"PGRP"
 
 
-def _byte_unshuffle(data):
-    if len(data) < 5 or data[:4] != _BSHF_MAGIC:
-        return data
-    stride = data[4]
-    if stride < 2:
-        return data[5:]
-    payload = np.frombuffer(data, dtype=np.uint8, offset=5)
-    n = len(payload)
-    out = np.empty(n, dtype=np.uint8)
-    src_off = 0
-    for pos in range(stride):
-        chunk_len = n // stride + (1 if pos < n % stride else 0)
-        out[pos::stride][:chunk_len] = payload[src_off : src_off + chunk_len]
-        src_off += chunk_len
-    return out.tobytes()
+def _similarity_sort_l1(matrix):
+    import numpy as _np
+    n = matrix.shape[0]
+    used = _np.zeros(n, dtype=bool)
+    order = [0]
+    used[0] = True
+    cur = matrix[0].astype(_np.float32)
+    for _ in range(n - 1):
+        dists = _np.sum(_np.abs(matrix[~used].astype(_np.float32) - cur), axis=1)
+        unused = _np.where(~used)[0]
+        best = unused[_np.argmin(dists)]
+        order.append(best)
+        used[best] = True
+        cur = matrix[best].astype(_np.float32)
+    return _np.array(order, dtype=_np.uint16)
 
 
-def _compress(data, compressor):
-    data = _byte_shuffle(data)
-    if compressor == "lzma":
-        return lzma.compress(data, preset=6)
-    elif compressor == "brotli":
+def _lrzip_compress(data, tmpdir, label):
+    inp = os.path.join(tmpdir, f"{label}.bin")
+    out = f"{inp}.lrz"
+    with open(inp, "wb") as f:
+        f.write(data)
+    subprocess.run(["lrzip", "-z", "-L", "9", "-o", out, inp], capture_output=True, check=True)
+    with open(out, "rb") as f:
+        result = f.read()
+    os.remove(inp); os.remove(out)
+    return result
+
+
+def _lrzip_decompress(data, tmpdir, label):
+    inp = os.path.join(tmpdir, f"{label}.lrz")
+    out = os.path.join(tmpdir, f"{label}.bin")
+    with open(inp, "wb") as f:
+        f.write(data)
+    subprocess.run(["lrzip", "-d", "-f", "-o", out, inp], capture_output=True, check=True)
+    with open(out, "rb") as f:
+        result = f.read()
+    os.remove(inp); os.remove(out)
+    return result
+
+
+def _pack_streams(streams):
+    import struct
+    n = len(streams)
+    hdr = _PACK_MAGIC + struct.pack("<I", n)
+    for s in streams:
+        hdr += struct.pack("<I", len(s))
+    return hdr + b"".join(streams)
+
+
+def _unpack_streams(blob):
+    import struct
+    assert blob[:4] == _PACK_MAGIC
+    n = struct.unpack("<I", blob[4:8])[0]
+    off = 8
+    lengths = [struct.unpack("<I", blob[off + i*4:off + i*4 + 4])[0] for i in range(n)]
+    off += n * 4
+    streams = []
+    for length in lengths:
+        streams.append(blob[off:off + length])
+        off += length
+    return streams
+
+
+def _compress(raw, compressor):
+    if compressor == "brotli":
         import brotli
-
-        return brotli.compress(data, quality=11)
-    raise ValueError(f"Unknown compressor: {compressor!r}")
-
-
-def _decompress(data, compressor):
+        return brotli.compress(raw, quality=11)
     if compressor == "lzma":
-        raw = lzma.decompress(data)
-    elif compressor == "brotli":
-        import brotli
+        import lzma
+        return lzma.compress(raw, preset=9)
+    raise ValueError(f"unknown compressor {compressor!r}")
 
-        raw = brotli.decompress(data)
-    else:
-        raise ValueError(f"Unknown compressor: {compressor!r}")
-    raw = _byte_unshuffle(raw)
-    return raw
+
+def _decompress(blob, compressor):
+    if compressor == "brotli":
+        import brotli
+        return brotli.decompress(blob)
+    if compressor == "lzma":
+        import lzma
+        return lzma.decompress(blob)
+    raise ValueError(f"unknown compressor {compressor!r}")
+
+
+def _serialize_pergroup(quant_result, quant_meta, num_layers, tmpdir):
+    import brotli
+    import numpy as _np
+    groups = collections.defaultdict(list)
+    remainder = {}
+    for name, t in sorted(quant_result.items()):
+        if t.dtype != torch.int8:
+            remainder[name] = t
+            continue
+        parts = name.split(".")
+        routed = False
+        if parts[0] == "blocks" and parts[1].isdigit():
+            key = ".".join(parts[2:])
+            if key in _GROUP_ORDER:
+                groups[key].append((int(parts[1]), t))
+                routed = True
+        else:
+            group_key = "_" + name
+            if group_key in _GROUP_ORDER:
+                groups[group_key] = [(0, t)]
+                routed = True
+        if not routed:
+            # int8 tensor that doesn't fit a known group (e.g. gate_int8_row
+            # tensors like attn.attn_gate_w.gq from GATED_ATTN). Stash in
+            # the brotli-compressed remainder blob so it round-trips.
+            remainder[name] = t
+
+    streams = []
+    all_perms = b""
+    shape_manifest = {}
+
+    for group_key in _GROUP_ORDER:
+        if group_key not in groups:
+            streams.append(b"")
+            continue
+        tensors = sorted(groups[group_key], key=lambda x: x[0])
+        blob = b""
+        grp_shapes = []
+        for idx, t in tensors:
+            arr = t.numpy()
+            orig_shape = arr.shape
+            if arr.ndim == 2:
+                if group_key in _SIMSORT_KEYS:
+                    order = _similarity_sort_l1(arr)
+                    all_perms += order.tobytes()
+                    arr = arr[order]
+                arr = _np.ascontiguousarray(arr.T)
+            blob += arr.tobytes()
+            grp_shapes.append(orig_shape)
+        shape_manifest[group_key] = grp_shapes
+        compressed = _lrzip_compress(blob, tmpdir, group_key.replace(".", "_"))
+        streams.append(compressed)
+
+    remainder_buf = io.BytesIO()
+    torch.save({"r": remainder, "m": quant_meta, "s": shape_manifest}, remainder_buf)
+    streams.append(brotli.compress(remainder_buf.getvalue(), quality=11, lgwin=24))
+    streams.append(brotli.compress(all_perms, quality=11) if all_perms else b"")
+
+    return _pack_streams(streams)
+
+
+def _deserialize_pergroup(blob, num_layers, tmpdir):
+    import brotli
+    import numpy as _np
+    streams = _unpack_streams(blob)
+    n_groups = len(_GROUP_ORDER)
+
+    remainder_state = torch.load(
+        io.BytesIO(brotli.decompress(streams[n_groups])), map_location="cpu"
+    )
+    quant_meta = remainder_state["m"]
+    quant_result = dict(remainder_state["r"])
+    shape_manifest = remainder_state["s"]
+    all_perms = brotli.decompress(streams[n_groups + 1]) if streams[n_groups + 1] else b""
+
+    def _decompress_one(args):
+        i, gk, data = args
+        if not data:
+            return gk, b""
+        return gk, _lrzip_decompress(data, tmpdir, f"d_{gk.replace('.', '_')}")
+
+    from concurrent.futures import ThreadPoolExecutor as _TPool
+    with _TPool(max_workers=n_groups) as pool:
+        futs = [pool.submit(_decompress_one, (i, gk, streams[i])) for i, gk in enumerate(_GROUP_ORDER)]
+        raw_groups = {f.result()[0]: f.result()[1] for f in futs}
+
+    perm_off = 0
+    for group_key in _GROUP_ORDER:
+        raw = raw_groups.get(group_key, b"")
+        if not raw:
+            continue
+        grp_shapes = shape_manifest[group_key]
+        data_arr = _np.frombuffer(raw, dtype=_np.int8)
+
+        if group_key.startswith("_"):
+            tensor_names = [group_key[1:]]
+        else:
+            tensor_names = [f"blocks.{i}.{group_key}" for i in range(num_layers)]
+
+        offset = 0
+        for tname, orig_shape in zip(tensor_names, grp_shapes):
+            n_elem = 1
+            for d in orig_shape:
+                n_elem *= d
+            chunk = data_arr[offset:offset + n_elem].copy()
+            offset += n_elem
+
+            if len(orig_shape) == 2:
+                rows, cols = orig_shape
+                chunk = chunk.reshape(cols, rows).T
+
+                if group_key in _SIMSORT_KEYS:
+                    perm = _np.frombuffer(all_perms[perm_off:perm_off + rows * 2], dtype=_np.uint16)
+                    perm_off += rows * 2
+                    inv_perm = _np.empty_like(perm)
+                    inv_perm[perm] = _np.arange(rows, dtype=_np.uint16)
+                    chunk = chunk[inv_perm]
+
+                chunk = chunk.reshape(orig_shape)
+
+            quant_result[tname] = torch.from_numpy(_np.ascontiguousarray(chunk))
+
+    return quant_result, quant_meta
 
 
 def _unbank_state_dict(state_dict, num_layers):
@@ -2459,14 +2627,18 @@ def _rebank_state_dict(flat_sd, num_layers, model_dim, kv_dim, hidden_dim):
 
 
 def _compressed_code_size(code):
+    import brotli
     code_raw = code.encode("utf-8")
-    minified = subprocess.run(
-        ["pyminify", "--no-rename-locals", "--no-hoist-literals", "--remove-literal-statements", "-"],
-        input=code_raw, capture_output=True, check=True,
-    ).stdout
-    compressed = lzma.compress(minified)
+    try:
+        minified = subprocess.run(
+            ["pyminify", "--no-rename-locals", "--no-hoist-literals", "--remove-literal-statements", "--remove-asserts", "--prefer-single-line", "-"],
+            input=code_raw, capture_output=True, check=True,
+        ).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        minified = code_raw
+    compressed = brotli.compress(minified, quality=11)
     encoded = base64.b85encode(compressed)
-    wrapper = b'import lzma as L,base64 as B\nexec(L.decompress(B.b85decode("' + encoded + b'")))\n'
+    wrapper = b"import brotli as B,base64 as b\nexec(B.decompress(b.b85decode(\"" + encoded + b"\")))\n"
     return len(code_raw), len(wrapper)
 
 
@@ -2492,10 +2664,22 @@ def serialize(h, base_model, code):
     )
     log(f"GPTQ:collected {len(hessians)} Hessians in {time.perf_counter()-t0:.1f}s")
     quant_result, quant_meta = gptq_mixed_quantize(sd_cpu, hessians, h)
-    quant_buf = io.BytesIO()
-    torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
-    quant_raw = quant_buf.getvalue()
-    quant_blob = _compress(quant_raw, h.compressor)
+    if h.compressor == "pergroup":
+        import tempfile
+        tmpdir = tempfile.mkdtemp(prefix="pgrp_")
+        log("Serialize: per-group lrzip compression...")
+        t1 = time.perf_counter()
+        quant_blob = _serialize_pergroup(quant_result, quant_meta, h.num_layers, tmpdir)
+        log(f"Serialize: per-group compression done in {time.perf_counter()-t1:.1f}s")
+        try:
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
+    else:
+        quant_buf = io.BytesIO()
+        torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
+        quant_raw = quant_buf.getvalue()
+        quant_blob = _compress(quant_raw, h.compressor)
     quant_file_bytes = len(quant_blob)
     bytes_total = quant_file_bytes + code_bytes
     if h.is_main_process:
@@ -2512,10 +2696,25 @@ def deserialize(h, device):
     flat_template = _unbank_state_dict(eval_model.state_dict(), h.num_layers)
     with open(h.quantized_model_path, "rb") as f:
         quant_blob_disk = f.read()
-    quant_state = torch.load(
-        io.BytesIO(_decompress(quant_blob_disk, h.compressor)), map_location="cpu"
-    )
-    deq_flat = dequantize_mixed(quant_state["w"], quant_state["m"], flat_template)
+    if quant_blob_disk[:4] == _PACK_MAGIC:
+        import tempfile
+        tmpdir = tempfile.mkdtemp(prefix="pgrp_dec_")
+        log("Deserialize: per-group lrzip decompression...")
+        t0 = time.perf_counter()
+        quant_result, quant_meta = _deserialize_pergroup(
+            quant_blob_disk, h.num_layers, tmpdir
+        )
+        log(f"Deserialize: decompression done in {time.perf_counter()-t0:.1f}s")
+        try:
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
+    else:
+        quant_state = torch.load(
+            io.BytesIO(_decompress(quant_blob_disk, h.compressor)), map_location="cpu"
+        )
+        quant_result, quant_meta = quant_state["w"], quant_state["m"]
+    deq_flat = dequantize_mixed(quant_result, quant_meta, flat_template)
     head_dim = h.model_dim // h.num_heads
     kv_dim = h.num_kv_heads * head_dim
     hidden_dim = int(h.mlp_mult * h.model_dim)
@@ -2584,22 +2783,10 @@ def eval_val(h, device, val_data, model, forward_logits_fn=None):
             val_token_count += float(y.numel())
             prev_ids = x
             tgt_ids = y
-            if val_data.caseops_enabled and val_data.val_bytes is not None:
-                # CaseOps: read per-token byte budget from sidecar at the same
-                # global positions as the target tokens y. raw_start/raw_end
-                # span [raw_start, raw_end), x = local[:-1], y = local[1:],
-                # so y is at sidecar positions [raw_start + 1, raw_end).
-                sidecar_slice = val_data.val_bytes[raw_start + 1 : raw_end].to(
-                    device=device, dtype=torch.int32, non_blocking=True
-                )
-                val_byte_count += sidecar_slice.to(torch.float64).sum()
-            else:
-                token_bytes = val_data.base_bytes_lut[tgt_ids].to(dtype=torch.int16)
-                token_bytes += (
-                    val_data.has_leading_space_lut[tgt_ids]
-                    & ~val_data.is_boundary_token_lut[prev_ids]
-                ).to(dtype=torch.int16)
-                val_byte_count += token_bytes.to(torch.float64).sum()
+            sidecar_slice = val_data.val_bytes[raw_start + 1 : raw_end].to(
+                device=device, dtype=torch.int32, non_blocking=True
+            )
+            val_byte_count += sidecar_slice.to(torch.float64).sum()
     if dist.is_available() and dist.is_initialized():
         dist.all_reduce(val_loss_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(val_token_count, op=dist.ReduceOp.SUM)
@@ -3173,8 +3360,8 @@ def train_model(h, device, val_data):
             return max((1.0 - frac) / h.warmdown_frac, h.min_lr)
         return 1.0
 
+    _clip_params = [p for p in base_model.parameters() if p.requires_grad]
     def step_fn(step, lr_scale):
-        optimizers.zero_grad_all()
         train_loss = torch.zeros((), device=device)
         for micro_step in range(h.grad_accum_steps):
             x, y, cu_seqlens, _max_seqlen = train_loader.next_batch(
@@ -3185,21 +3372,32 @@ def train_model(h, device, val_data):
             train_loss += loss.detach()
             (loss / h.grad_accum_steps).backward()
         train_loss /= h.grad_accum_steps
-        frac = (
-            min(step / h.muon_momentum_warmup_steps, 1.0)
-            if h.muon_momentum_warmup_steps > 0
-            else 1.0
-        )
-        muon_momentum = (
-            1 - frac
-        ) * h.muon_momentum_warmup_start + frac * h.muon_momentum
-        for group in optimizers.optimizer_muon.param_groups:
-            group["momentum"] = muon_momentum
+        if step <= h.muon_momentum_warmup_steps:
+
+            frac = (
+
+                min(step / h.muon_momentum_warmup_steps, 1.0)
+
+                if h.muon_momentum_warmup_steps > 0
+
+                else 1.0
+
+            )
+
+            muon_momentum = (
+
+                1 - frac
+
+            ) * h.muon_momentum_warmup_start + frac * h.muon_momentum
+
+            for group in optimizers.optimizer_muon.param_groups:
+
+                group["momentum"] = muon_momentum
         for opt in optimizers:
             for group in opt.param_groups:
                 group["lr"] = group["base_lr"] * lr_scale
         if h.grad_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(base_model.parameters(), h.grad_clip_norm)
+            torch.nn.utils.clip_grad_norm_(_clip_params, h.grad_clip_norm)
         optimizers.step(distributed=h.distributed)
         return train_loss
 
@@ -3267,10 +3465,12 @@ def train_model(h, device, val_data):
             opt.load_state_dict(state)
         optimizers.zero_grad_all()
         train_loader = DocumentPackingLoader(h, device)
+    _live_state = base_model.state_dict(keep_vars=True)
     ema_state = {
         name: t.detach().float().clone()
-        for (name, t) in base_model.state_dict().items()
+        for (name, t) in _live_state.items()
     }
+    _ema_pairs = [(ema_state[name], t) for (name, t) in _live_state.items()]
     ema_decay = h.ema_decay
     training_time_ms = 0.0
     stop_after_step = None
@@ -3317,10 +3517,8 @@ def train_model(h, device, val_data):
             )
         train_loss = step_fn(step, scale)
         with torch.no_grad():
-            for (name, t) in base_model.state_dict().items():
-                ema_state[name].mul_(ema_decay).add_(
-                    t.detach().float(), alpha=1.0 - ema_decay
-                )
+            for ema_t, t in _ema_pairs:
+                ema_t.mul_(ema_decay).add_(t.detach(), alpha=1.0 - ema_decay)
         step += 1
         approx_training_time_ms = training_time_ms + 1e3 * (time.perf_counter() - t0)
         should_log_train = h.train_log_every > 0 and (
@@ -3527,7 +3725,7 @@ def main():
     enable_mem_efficient_sdp(False)
     enable_math_sdp(False)
     torch._dynamo.config.optimize_ddp = False
-    torch._dynamo.config.cache_size_limit = 16
+    torch._dynamo.config.cache_size_limit = 64
     h = Hyperparameters()
     set_logging_hparams(h)
     if h.is_main_process:

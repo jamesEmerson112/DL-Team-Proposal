@@ -1,0 +1,76 @@
+# =============================================================================
+# Session 16: Full Pipeline on 2xH100 (6 runs, ~1.5 hours)
+# =============================================================================
+#
+# Phase 1: EMA deeper sweep (3 runs, ~40 min)
+#   R1: EMA=0.995 + WD=0.10, R2: EMA=0.993, R3: EMA=0.990
+# Phase 2: PreQuantTTT with best EMA (1 run, ~15 min)
+#   R4: 21 epochs AdamW on val before GPTQ
+# Phase 3: Compression (2 runs, ~30 min)
+#   R5: lrzip+emb7, R6: lrzip+emb8 (relaxed)
+#
+# Auto-picks best EMA from Phase 1 and feeds into Phase 2-3.
+# Session 15 baselines: E1 (EMA=0.995) = 1.1562, C6 = 1.1622
+# Estimated cost: ~$8 for 2xH100 pod (~1.5 hours)
+
+# =============================================================================
+# STEP 0: SETUP (RunPod 2xH100)
+# =============================================================================
+
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment
+
+# === Install deps ===
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli
+pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Install FlashAttention-3
+python3 -c "import torch; print(f'CUDA: {torch.version.cuda}')"
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# === Download SP8192 dataset ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# === Preflight check ===
+python3 -c "
+from flash_attn_interface import flash_attn_func as fa3
+import brotli
+import torch
+print(f'PyTorch: {torch.__version__}')
+print(f'CUDA: {torch.version.cuda}')
+print(f'GPUs: {torch.cuda.device_count()}')
+print(f'FA3: OK')
+print(f'brotli: OK')
+assert torch.cuda.device_count() >= 2, f'Need 2 GPUs, found {torch.cuda.device_count()}'
+print('Preflight PASSED')
+"
+
+cd ..  # back to DL-Team-Proposal root
+
+# =============================================================================
+# RUN ALL 6 EXPERIMENTS (Phase 1 + 2 + 3)
+# =============================================================================
+# Single script — auto-picks best EMA from Phase 1 for Phase 2-3.
+# Script auto-navigates to parameter-golf/ internally.
+
+bash runs/run_v2_session16_2gpu.sh
+
+# =============================================================================
+# AFTER ALL RUNS
+# =============================================================================
+# 1. Check the full summary table at the end
+# 2. Key metrics to compare:
+#    - Phase 1: which EMA beats E1 (1.1562)?
+#    - Phase 2: post-prequant-ttt BPB should drop ~0.06 from pre-Q
+#    - Phase 3: lrzip size vs brotli, emb8 BPB recovery
+# 3. Best config goes to 8xH100 3-seed submission
+# 4. Copy logs to local machine before terminating pod

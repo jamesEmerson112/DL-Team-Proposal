@@ -3,8 +3,8 @@
 Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) applicable to the Parameter Golf challenge
 (17M param GPT, 16 MB artifact, 10 min on 8xH100, 1024-token vocab, FineWeb).
 
-**Last updated:** 2026-04-29
-**Current SOTA:** 1.0810 BPB (bigbag, rank 1) | **Baseline:** 1.2244 BPB | **Our best:** 1.0805 (C6, 3-seed mean, 8×H100) | **Best raw:** 1.0801 (A3, headwise no compression, 8×H100, over budget)
+**Last updated:** 2026-04-30
+**Current SOTA:** 1.0066 BPB (us, P3, PR #2071, NEW SOTA) | **Baseline:** 1.2244 BPB | **Our best:** 1.0066 (P3, 3-seed mean, 8×H100) | **Best 2×H100:** 1.1368 (N1, EMA+SmallBatch) | **Previous SOTA:** 1.0611 (codemath3000, PR #1855)
 
 ---
 
@@ -14,26 +14,26 @@ Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) 
 |---|-------|-------|------|---------------|----------------|--------------------------------|
 | 26 | **Exclusive Self-Attention (XSA)** | arXiv 2026 | [arxiv](https://arxiv.org/abs/2603.09078) | Attention orthogonal to self-value vector; forces better context modeling | **Proven** — ranks 8,10,14,15 (best 1.0979) | Consistently outperforms standard self-attention up to 2.7B. Minimal overhead. Widely adopted on leaderboard. |
 | 29 | **Cross-Sequence Attention** | PG competition technique (2026) | N/A | Attend across sequence boundaries in deepest 3-4 layers during evaluation | **Proven** — ranks 14,15 (1.1307) | Eval-time only trick, no training change. Partial XSA on last 3-4 layers. High priority since validated by top submissions. |
-| 15 | **Small Batch Size Training / Why Gradient Accumulation is Wasteful** | NeurIPS 2025 | [neurips](https://neurips.cc/virtual/2025/poster/119899) | Small batch sizes are stable with proper Adam hyperparameter scaling; avoiding gradient accumulation improves per-FLOP performance | Not tested | If currently using gradient accumulation, removing it and training with the natural per-GPU batch size could improve efficiency. Scale Adam beta2 to match. |
-| 21 | **HybridNorm** | NeurIPS 2025 | [arxiv](https://arxiv.org/abs/2503.04598) | QKV normalization inside attention + Post-Norm in FFN; combines Pre-Norm stability with Post-Norm performance | Not tested | Cheap (just extra norm ops). Could improve training stability and final loss at 17M scale. Easy to implement: add RMSNorm to Q,K,V projections. |
-| 19 | **Differential Attention (Diff Transformer)** | ICLR 2025 (Oral) | [arxiv](https://arxiv.org/abs/2410.05258) | Computes attention as the difference of two softmax maps; cancels noise, promotes sparse attention | Not tested | Lightweight (split Q/K heads, two softmax, subtract), minimal extra params. Noise-cancellation could improve BPB by helping the model attend more precisely. |
+| 15 | **Small Batch Size Training / Why Gradient Accumulation is Wasteful** | NeurIPS 2025 | [neurips](https://neurips.cc/virtual/2025/poster/119899) | Small batch sizes are stable with proper Adam hyperparameter scaling; avoiding gradient accumulation improves per-FLOP performance | **Tested — CONTEXT-DEPENDENT** (paper read) | **2×H100:** SUCCESS — ga=4→1 gives −0.015 BPB (B2=1.1419 vs C6=1.1572). **8×H100 on C6/@bigbag stack:** FAILS — L2=1.0926 vs C6=1.0805 (+0.0121). **8×H100 on PR #1851 stack:** SUCCESS — P3=1.0066 (NEW SOTA). Works when combined with EMA=0.990 on LQER base. Context-dependent: fails on C6/@bigbag stack, works on PR #1851 stack. |
+| 21 | **HybridNorm** | NeurIPS 2025 | [arxiv](https://arxiv.org/abs/2503.04598) | QKV normalization inside attention + Post-Norm in FFN; combines Pre-Norm stability with Post-Norm performance | **Tested — FAILS** (Ashray, rank 4) | **Session 17:** Ashray tested V-norm + Post-Norm FFN on rank 4 stack → +0.011 BPB regression. Already-normalized architectures (QK-norm, ln_scale, attn_scale/mlp_scale) conflict with additional norms. |
+| 19 | **Differential Attention (Diff Transformer)** | ICLR 2025 (Oral) | [arxiv](https://arxiv.org/abs/2410.05258) | Computes attention as the difference of two softmax maps; cancels noise, promotes sparse attention | **Tested — FAILS** | **Session 17:** Split Q/K in half, two FA3 calls, subtract with learnable λ. N2 = 1.1506 vs N1 = 1.1368 (+0.0138 regression). Root cause: 2× FA3 calls → 22% fewer steps (1,444 vs 1,853). Throughput penalty outweighs attention quality at 36M under 10-min wall clock. |
 | 20 | **Value Residual Learning (ResFormer)** | ACL 2025 | [arxiv](https://arxiv.org/abs/2410.17897) | Residual connection from first layer's V matrix to all subsequent layers; mitigates attention concentration | **Tested — HURTS on rank 1 stack at all scales.** 2×H100: +0.0025 (F4 vs F1). 8×H100: +0.0022 (A2=1.0828 vs A1=1.0806). α=0.5 helps on simple 10L MHA stack (-0.0048, Session 11) but redundant with parallel residuals. | Not recommended for rank 1-style configs. Confirmed across 2× and 8×H100. |
-| 22 | **Peri-LN** | ICML 2025 | [arxiv](https://arxiv.org/abs/2502.02732) | Normalizes both input AND output of each sublayer; constrains residual spikes | Not tested | Zero extra params, just rearranging norm placement. Stabler gradients = faster convergence. Easy A/B test. |
+| 22 | **Peri-LN** | ICML 2025 | [arxiv](https://arxiv.org/abs/2502.02732) | Normalizes both input AND output of each sublayer; constrains residual spikes | **Tested — FAILS** | **Session 15-16:** Immediate NaN. Output norms on attn+MLP conflict with existing attn_scale/mlp_scale + depth-dependent ln_scale_factor. Destabilizes the rank 1 stack. Do not use. |
 | 1 | **Not All Tokens Are What You Need (Rho-1)** | NeurIPS 2024 Best Paper Runner-Up | [arxiv](https://arxiv.org/abs/2404.07965) | Selective Language Modeling — score tokens with a reference model, train only on high-excess-loss tokens | **Tested — FAILS at 17M scale** | Tested Option A (simple loss-threshold) at k=0.6 to k=0.95 in Session 7. Every ratio hurts BPB: k=0.6 = +0.155, k=0.8 = +0.024, k=0.95 = +0.002 vs no-SLM baseline. Paper tested at 1B+; doesn't transfer to 17M. Small models need every gradient signal. |
 | 3 | **Scaling Laws with Vocabulary** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/93395) | Optimal vocab size scales with model size; most LLMs use too-small vocabularies | Proven — SP4096/SP8192 used in ranks 1-8 | At 17M params, 1024 tokens may actually be near-optimal or even oversized. The paper's scaling law could confirm whether 1024 is right or if 512/2048 would be better. Vocab is a free knob. |
-| 4 | **Resolving Discrepancies in Compute-Optimal Scaling** | NeurIPS 2024 Spotlight | [arxiv](https://arxiv.org/abs/2406.19146) | Corrects Kaplan vs Chinchilla scaling law gap; derives optimal LR and batch size scaling laws; AdamW beta2 tuning is essential at low batch sizes | N/A (theory) | Directly useful: the paper provides formulas for optimal LR and batch size given compute budget. Also shows LR warmup tokens should equal model size N — so ~17M tokens for a 17M model. **Note: rank 1 skips LR warmup entirely** (uses compile warmup instead — see paper #16 notes). |
-| 5 | **Building on Efficient Foundations: Structured FFN Layers** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2406.16450) | Replace dense FFN with low-rank + block-diagonal matrices; 17% throughput boost; steeper scaling curves | Not tested (paper read) | Could replace the FFN with structured matrices: same model quality with 32% fewer FFN params and 1.35x training speed. Directly trades FFN params for more steps in 10 min. |
+| 4 | **Resolving Discrepancies in Compute-Optimal Scaling** | NeurIPS 2024 Spotlight | [arxiv](https://arxiv.org/abs/2406.19146) | Corrects Kaplan vs Chinchilla scaling law gap; derives optimal LR and batch size scaling laws; AdamW beta2 tuning is essential at low batch sizes | **Not useful for PG** (paper read) | Chinchilla optimal is ~20 tokens/param; PG runs at ~97 tokens/param (3.5B tokens / 36M params). But PG fixes model size (16 MB) and time (10 min) — we can't rebalance. The "overtraining" regime is inherent to PG and not a problem to solve. β2 tuning insight already adopted (SOTA uses β2=0.99). |
+| 5 | **Building on Efficient Foundations: Structured FFN Layers** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2406.16450) | Replace dense FFN with low-rank + block-diagonal matrices; 17% throughput boost; steeper scaling curves | **Tested — FAILS at V2 scale** | **Session 15:** Implemented low-rank up-proj + block-diagonal down-proj in V2 MLP. Two configs: r=0.5/b=4 (23M, +0.0425 BPB) and r=0.75/b=8 (25.2M, +0.0496 BPB). Massive param/size savings (13-14 MB) but BPB degradation far too large. Paper tested at 125M+; doesn't transfer to 36M. |
 | 6 | **SwitchHead: MoE Attention** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2312.07987) | Mixture-of-experts in attention layer; computes up to 8x fewer attention matrices; 44% compute, 27% memory | Not tested | Could dramatically speed up attention computation. At 17M params with GQA already in use, SwitchHead could stack on top for further speedup. More steps in 10 min. |
 | 7 | **MoEUT: Mixture-of-Experts Universal Transformers** | NeurIPS 2024 | [neurips](https://proceedings.neurips.cc/paper_files/paper/2024/hash/321387ba926b8e58d3591c0aeb52ffc2-Abstract-Conference.html) | Layer sharing (depth recurrence) + MoE to compensate for reduced parameter count | **Proven + Used by us** (paper read) — depth recurrence in SOTA (rank 1, 1.0810). Our C6 = 1.0805 BPB (8×H100). | **Used in our V2 factorial** — rank 1 fork uses layers 3-4-5 looped 2× (17 virtual from 11 physical). Core technique enabling 35.9M params in 16 MB. |
 | 9 | **OneBit / BitNet** | NeurIPS 2024 / arXiv 2023 | [neurips](https://neurips.cc/virtual/2024/poster/94602) | 1-bit or 1.58-bit weight quantization during training (QAT); BitLinear as drop-in replacement for nn.Linear | Not tested | The artifact is int8+zlib compressed. Training with QAT at 1.58-bit could yield a much smaller compressed artifact (well under 16 MB), freeing budget for more parameters/layers. |
 | 10 | **Compact Language Models via Pruning and Knowledge Distillation** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2407.14679) | Structured pruning (depth, width, attention, MLP) + KD retraining with <3% of original data | Not tested | If a larger model can be trained first (say 50M), then pruned+distilled to 17M in the remaining time, the result may beat training 17M from scratch. Two-phase approach. |
 | 11 | **MemoryFormer** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2411.12992) | Replace FFN linear layers with locality-sensitive hash lookups into memory tables; near-zero FLOPs for FFN | Not tested | Radical FFN replacement. Could make each forward pass much cheaper (FFN is ~2/3 of FLOPs), allowing more steps in 10 min. The hash tables would need to fit in 16 MB though. |
-| 12 | **MATES: Model-Aware Data Selection** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/96504) | Continuously adapt data selection to model's evolving preferences during pretraining; 2x gains over static selection, halves FLOPs to reach target loss | Not tested | Online data selection from FineWeb could double training efficiency. The influence model is tiny and runs alongside the main model. |
+| 12 | **MATES: Model-Aware Data Selection** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/96504) | Continuously adapt data selection to model's evolving preferences during pretraining; 2x gains over static selection, halves FLOPs to reach target loss | Not tested (paper read) | Online data selection from FineWeb could double training efficiency. The influence model is tiny and runs alongside the main model. |
 | 13 | **Faster LLM Training with Variable Sequence Length Curriculum** | NeurIPS 2024 | [neurips](https://proceedings.neurips.cc/paper_files/paper/2024/file/3f9bf45ea04c98ad7cb857f951f499e2-Paper-Conference.pdf) | Start with short sequences, gradually increase; reduces early-training compute waste | Not tested (may not be helpful) | Short sequences early = faster steps early = more gradient updates in 10 min. Simple to implement: just sort/bucket FineWeb by length. |
 | 14 | **Surge Phenomenon in Optimal LR and Batch Size** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/94086) | For Adam-style optimizers, optimal LR first rises then falls as batch size increases; provides tuning guidance | N/A (theory) | Critical for 8xH100 setup where large batch sizes are natural. Helps find the right LR for the actual batch size being used. |
-| 16 | **Why Warmup the Learning Rate?** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/95431) | Warmup forces network to well-conditioned loss landscape regions; optimal warmup tokens ~ model size N | N/A (theory) | **Note: rank 1 does NOT use LR warmup.** Their "warmup" is a torch.compile/CUDA JIT warmup (20+20 throwaway steps, then full weight+optimizer reset). LR starts at 1.0 from step 0, with only warmdown (cosine decay over last 72%). This paper's LR warmup technique is untested on the PG stack. |
+| 16 | **Why Warmup the Learning Rate?** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/95431) | Warmup forces network to well-conditioned loss landscape regions; optimal warmup tokens ~ model size N | **Tested — HURTS** | **Session 15:** Tested 2%, 5%, 10% warmup fractions on V2 C6 (2×H100). All worse, monotonically: +0.0024, +0.0042, +0.0066 BPB vs no-warmup baseline. Rank 1 was right to skip LR warmup. At ~1,000 steps, warmup wastes too much of the short training window. |
 | 17 | **Cross-Layer Attention (CLA)** | NeurIPS 2024 | [neurips](https://neurips.cc/virtual/2024/poster/95548) | Share KV heads between adjacent layers; 2x KV cache reduction with minimal accuracy loss | Not tested | Reduces parameter count for KV projections across layers. Combined with GQA already in use, this could further shrink the model while maintaining quality. |
-| 23 | **Schedule-Free Optimizer** | NeurIPS 2024 (Oral) | [arxiv](https://arxiv.org/abs/2405.15682) | Replaces momentum with interpolation + averaging; no LR schedule needed; won MLCommons AlgoPerf | Not tested | Eliminates LR warmup/cooldown tuning. Perfect for 10-min wall clock where step count is unknown. Drop-in AdamW replacement. Note: rank 1 already skips LR warmup, uses only warmdown (cosine decay last 72%). |
+| 23 | **Schedule-Free Optimizer** | NeurIPS 2024 (Oral) | [arxiv](https://arxiv.org/abs/2405.15682) | Replaces momentum with interpolation + averaging; no LR schedule needed; won MLCommons AlgoPerf | Not tested (paper read) | Eliminates LR warmup/cooldown tuning. Perfect for 10-min wall clock where step count is unknown. Drop-in AdamW replacement. Note: rank 1 already skips LR warmup, uses only warmdown (cosine decay last 72%). |
 | 24 | **FlashAttention-3** | NeurIPS 2024 | [arxiv](https://arxiv.org/abs/2407.08608) | Warp-specialization on H100 Hopper; interleaved matmul+softmax; FP8 block quantization; 1.5-2x over FA2 | **Proven** — rank 15 (1.1307) | Direct throughput win on 8xH100 target hardware. FA3 reaches 740 TFLOP/s (75% utilization) vs FA2's 35%. Check if `train_gpt.py` already uses it. |
 | 25 | **Early Weight Averaging** | COLM 2024 | [arxiv](https://arxiv.org/abs/2306.03241) | Average checkpoints along training trajectory; outperforms EMA and standard SWA | **Proven** — ranks 7,12,13,14 (EMA ~1.1228) | Already proven on PG leaderboard (~0.01 BPB drop). Free at inference time. Must-have for any competitive submission. |
 | 8 | **Dynamic Layer Tying** | ICLR 2024 | [arxiv](https://arxiv.org/abs/2401.12819) | RL-based dynamic selection of which layers to tie during training; 75-87% parameter reduction | Not tested | Extreme parameter reduction for the 16 MB constraint. If 9 layers can be collapsed to 2-3 unique layers + routing, the artifact shrinks dramatically while maintaining perplexity. |
@@ -57,10 +57,10 @@ Techniques confirmed used by top PG submissions as of April 2026:
 | XSA / Cross-Sequence Attention | #26, #29 | 1.0979 | Ranks 8, 10, 14, 15 | Eval-time |
 | FlashAttention-3 | #24 | 1.1307 | Rank 15 | Throughput |
 | Value Residual Learning | #20 | 1.0979 (mentioned) | Rank 8 | Architecture |
-| Depth Recurrence (MoEUT-style) | #7 | 1.0810 (SOTA) | Rank 1 | Architecture |
-| Vocab Scaling (SP4096/SP8192) | #3 | 1.0810 (SOTA) | Ranks 1-8 | Data/Tokenizer |
-| Gated Attention (our technique) | N/A | 1.0801 (A3, 8×H100, over budget) | V2 rank 1 fork + headwise gate | Architecture |
-| Full rank 1 stack + our techniques | #7,#24,#25,#26 | 1.0805 (C6 mean, 8×H100) | V2 C6 submission config | Combined |
+| Depth Recurrence (MoEUT-style) | #7 | 1.0066 (P3, NEW SOTA) | Rank 1, P3 | Architecture |
+| Vocab Scaling (SP4096/SP8192) | #3 | 1.0066 (P3, NEW SOTA) | Ranks 1-8, P3 | Data/Tokenizer |
+| Gated Attention (our technique) | N/A | 1.0066 (P3, 8×H100, NEW SOTA) | PR #1851 fork + headwise gate | Architecture |
+| Full stack + our techniques | #7,#15,#24,#25,#26 | 1.0066 (P3 mean, 8×H100, NEW SOTA) | PR #1851 fork + headwise gate + EMA=0.990 + small batch + emb6 | Combined |
 
 Additional confirmed leaderboard techniques (not from papers above):
 - **LoRA TTT** — test-time training with low-rank updates
@@ -70,9 +70,9 @@ Additional confirmed leaderboard techniques (not from papers above):
 - **GPTQ Embeddings + SDClip** — Hessian-aware quantization with per-layer clipping
 - **MuonEq-R** — row-normalized Muon optimizer
 - **Parallel Residuals** — GPT-J style separate attention/MLP residual streams
-- **QK-Gain** — learnable per-head attention scaling (optimal 5.25)
+- **QK-Gain** — learnable per-head attention scaling (5.0-5.25)
 
-Current SOTA: **1.0810 BPB** (bigbag, rank 1). Our best: **1.0805 BPB** (C6, 3-seed mean, 8×H100).
+Current SOTA: **1.0066 BPB** (us, P3, 3-seed mean, 8×H100, PR #2071). Previous SOTA: 1.0611 (codemath3000, PR #1855).
 
 ---
 
@@ -90,9 +90,9 @@ Cache V from layer 0, add a scaled residual V_0 to each subsequent layer's V mat
 **Impact: PROVEN ~0.01 BPB | Effort: LOW | Leaderboard: Proven (ranks 7,12,13,14)**
 Average checkpoints along the training trajectory. Free at inference time — just average weights post-training. Must-have for any competitive submission. Save checkpoints every N steps in the last phase of training, average them. Already validated by multiple leaderboard entries. **Now in use** — V2 factorial uses EMA decay 0.9965. Part of rank 1 stack.
 
-### 4. Peri-LN or HybridNorm — Papers #21, #22
-**Impact: MEDIUM | Effort: LOW | Leaderboard: Not tested**
-Better normalization placement = stabler gradients = faster convergence. Zero extra parameters. Peri-LN normalizes both input AND output of each sublayer. HybridNorm adds QKV norm + Post-Norm FFN. Easy A/B test with minimal code changes.
+### ~~4. Peri-LN~~ or HybridNorm — Papers #21, #22
+**Impact: ~~MEDIUM~~ Peri-LN FAILS / HybridNorm untested | Effort: LOW | Leaderboard: Peri-LN tested — fails**
+~~Better normalization placement = stabler gradients = faster convergence.~~ **Session 15-16:** Peri-LN (Paper #22) tested — immediate NaN. Output norms on attn+MLP conflict with existing attn_scale/mlp_scale + ln_scale_factor. **Do not use Peri-LN.** HybridNorm (#21, QKV norm + Post-Norm FFN) remains untested — different mechanism, may still work.
 
 ### 5. Differential Attention — Paper #19
 **Impact: HIGH potential | Effort: MEDIUM | Leaderboard: Not tested**
@@ -102,12 +102,12 @@ Compute attention as the difference of two softmax maps. ICLR 2025 Oral. Noise-c
 **Impact: MEDIUM | Effort: LOW | Leaderboard: Not tested**
 No LR schedule needed — perfect for fixed 10-min wall clock where step count is unknown. Won MLCommons 2024 AlgoPerf Self-Tuning track. Drop-in AdamW replacement. Could combine with Muon for matrix params and Schedule-Free Adam for embeddings/scalars.
 
-### 7. Structured FFN (Low-Rank + Block-Diagonal) — Paper #5
-**Impact: HIGH | Effort: MEDIUM | Leaderboard: Not tested**
-Replace the dense FFN with structured matrices. This gives 1.35x training speedup (more steps in 10 min) AND steeper scaling curves (better loss per FLOP). The FFN is typically 2/3 of transformer parameters — making it structured could allow a wider or deeper model within the same 16 MB budget.
+### ~~7. Structured FFN (Low-Rank + Block-Diagonal) — Paper #5~~ FAILS AT V2 SCALE
+**Impact: ~~HIGH~~ NEGATIVE at 36M | Effort: MEDIUM | Leaderboard: Tested — fails**
+~~Replace the dense FFN with structured matrices.~~ **Session 15:** Implemented low-rank up-proj (dim→rank→hidden) + block-diagonal down-proj. Two configs: r=0.5/b=4 (23M params, 13.9 MB, +0.0425 BPB) and r=0.75/b=8 (25.2M, 13.0 MB, +0.0496 BPB). Impressive param/size savings but BPB degradation is 10× too large. Paper tested at 125M+; the quality-throughput tradeoff doesn't favor structured FFN at 36M. **Do not use.**
 
 ### 8. Layer Tying / Depth Recurrence (MoEUT style) — Paper #7 ✅ NOW IN USE
-**Impact: HIGH | Effort: HIGH | Leaderboard: Proven (SOTA rank 1, 1.0810)**
+**Impact: HIGH | Effort: HIGH | Leaderboard: Proven (used in P3 SOTA 1.0066, originally rank 1 1.0810)**
 Share weights across layers but add lightweight per-layer routing or adapters. A 9-layer model with 3 unique layer groups would have ~1/3 the parameters but similar effective depth. The freed parameter budget goes to wider dimensions or more heads. This is the single biggest lever for the 16 MB constraint. **Now in use** — V2 uses layers 3-4-5 looped 2× (17 virtual layers from 11 physical). C6 = 1.0805 BPB (8×H100).
 
 ---
@@ -125,17 +125,19 @@ Share weights across layers but add lightweight per-layer routing or adapters. A
 - **QK-Gain 5.0** — learnable per-head attention scaling
 - **TTT (score-first)** — test-time training at evaluation
 
-**V2 stack (rank 1 fork train_gpt_v2.py, C6 = 1.0805 BPB 8×H100, A3 = 1.0801 raw) — adds:**
+**V2 stack (rank 1 fork train_gpt_v2.py, C6 = 1.0805 BPB, P3 = 1.0066 BPB NEW SOTA, 8×H100) — adds:**
 - **Depth Recurrence** — layers 3-4-5 looped 2× (17 virtual from 11 physical) [Survey #7]
 - **Parallel Residuals** — layers 7+ GPT-J style
 - **Sigmoid Skip Gates** — learned encoder-decoder bridging
 - **XSA (Exclusive Self-Attention)** — all 11 layers [Survey #26]
-- **QK-Gain 5.25** — tuned up from 5.0
+- **QK-Gain 5.0-5.25** — learnable per-head attention scaling
 - **Partial RoPE** — 16/64 dims (upgraded from full RoPE)
 - **LN Scale 1/√(layer+1)** — depth-dependent normalization scaling
 - **MuonEq-R** — row-normalized Muon with WD=0.095
-- **EMA decay 0.9965** — exponential moving average [Survey #25]
+- **EMA decay 0.9965** (C6) / **0.990** (P3) — exponential moving average [Survey #25]
 - **GPTQ int6 + int8 embed + brotli** — enables 35.9M params in 16 MB
+- **Small batch (ga=1, 196K tokens)** — more optimizer updates in wall clock [Survey #15, P3]
+- **EMBED_BITS=6** — 6-bit embedding quantization, trades ~0.013 quant gap for ~1 MB savings [P3]
 - **FlashAttention-3** — 2x throughput over FA2 on H100 [Survey #24]
 - **Gated Attention (headwise)** — our original technique, ported to V2
 

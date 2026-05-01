@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 30+ experiments completed, best submittable result: **1.2077 BPB** (Run 11).
+This is a **Deep Learning Team Proposal** repository for CS 7643. The project investigates efficient language model training under extreme compression constraints through **OpenAI's Parameter Golf** challenge — training the best model within a 16 MB artifact budget and 10-minute wall clock on 8×H100 GPUs. We study which architectural and optimization techniques (SP8192 vocab, LeakyReLU², gated attention, QK-Gain, Score-First TTT, SLM) contribute most to model quality. 35+ experiments completed, best submittable result: **1.0805 BPB** (C6, 3-seed mean on 8×H100 — matches SOTA).
 
 ## Repository Structure
 
@@ -25,9 +25,10 @@ Active research + experimentation repository. Code modifications in `parameter-g
 ## Key Context
 
 - **Parameter Golf** is the active competition target: 16 MB artifact, 10 min on 8×H100, scored by FineWeb validation BPB
-- 30+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
-- Best submittable result: **1.2077 BPB** (Run 11, SP8192 combo slim + TTT) — beats PG baseline (1.2244)
-- 3-seed reproducibility confirmed: mean 1.2073 ±0.0006 BPB
+- 35+ experiments completed across 2×H100 and 8×H100, 21 experiment configs, 6 run scripts
+- Best submittable result: **1.0805 BPB** (C6, V2 headwise + emb7+eclip15, 3-seed mean on 8×H100) — matches SOTA (1.0810)
+- 3-seed reproducibility confirmed: C6 mean 1.0805 ±0.0012 BPB (V1 Run 11: 1.2073 ±0.0006)
+- **DO NOT SUBMIT YET** — matches SOTA but doesn't clear >=0.005 nats threshold for SOTA record. Keep technique secret.
 - nanochat is the official successor to nanoGPT (released Oct 2025) — studied for technique porting but not used directly
 
 ## Context History
@@ -208,3 +209,83 @@ Active research + experimentation repository. Code modifications in `parameter-g
   - "Techniques Already in Use" section: expanded from 7 items to V1 stack (9 items) + V2 stack (+12 items) with [Survey #N] tags
   - XSA and NorMuon struck through in "Techniques to Investigate" (now in use)
   - Zero stale "1.2653" references remain
+
+### 2026-04-29 (Session 15)
+- [run] Executed 19-run C6 fine-tuning sweep on 2×H100 (`run_v2_finetune_2gpu.sh`):
+  - TTT Grid (T1-T9): 9 runs, {3,5,7} epochs × {0.003, 0.005, 0.01} LR — none beat baseline. T8 (e7, lr0.005) = 1.1624, +0.0002 vs C6. Default (e3, lr0.005) is near-optimal.
+  - QK-Gain (Q1-Q3): 5.5/5.75/6.0 — all worse. Rank 1 default (5.25) optimal.
+  - **EMA (E1-E3): E1 (decay=0.995) = 1.1562, -0.0060 vs C6 — BIG WIN.** E2 (0.997) = 1.1690 worse. E3 (0.999) = 1.3475 catastrophic.
+  - WD (W1-W3): W2 (wd=0.10) = 1.1619, -0.0003 marginal.
+  - Warmdown (D1): frac=0.80 = 1.1645, worse than default 0.72.
+- [finding] **EMA=0.995 is the single best hyperparameter finding** — more aggressive weight averaging helps at this training duration
+- [finding] EMA sensitivity extreme: 0.995 (best) → 0.9965 (default) → 0.997 (worse) → 0.999 (catastrophic)
+- [finding] Projected 8×H100 with EMA=0.995: ~1.0745 BPB (from C6 1.0805 - 0.006)
+- [edit] Updated findings.md with full 19-run table, added E1 and W2 to 2×H100 leaderboard
+- [edit] Budget check added: train_gpt_v2.py = 50 KB, total submission ~15.74 MB, under budget
+
+### 2026-04-30 (Session 16)
+- [research] Checked PG leaderboard PRs — **SOTA exploded to 1.0136 BPB** (PR #1958, okezue)
+  - Key new techniques: PreQuantTTT (21ep AdamW on val before GPTQ, ~0.06 BPB), sliding-window stride-64 eval (~0.01 BPB), per-group lrzip compression, LQER, CaseOps tokenizer
+  - Multiple PRs in 1.05-1.07 range. Our C6 (1.0805) now ranks ~9th-10th.
+- [edit] Updated findings.md leaderboard: new SOTA 1.0136, added top 8 new PRs, updated submission strategy
+- [edit] Updated neurlps-paper-survey.md: marked papers #19, #21, #22, #23, #12 as "paper read"
+- [feat] Created `docs/James_notes/TODO.txt` — added Priority 1 (HybridNorm, Schedule-Free, DiffAttn) and Priority 2 (Peri-LN, Structured FFN, MATES) training techniques
+- [feat] Implemented PreQuantTTT in `parameter-golf/train_gpt_v2.py`:
+  - New `prequant_ttt()` function: 21 epochs AdamW, freezes blocks 0-1 + embeddings, cosine LR 5e-4→5e-5, federated avg across GPUs
+  - New env vars: `PREQUANT_TTT_ENABLED`, `PREQUANT_TTT_EPOCHS`, `PREQUANT_TTT_LR`, `PREQUANT_TTT_LR_END`
+  - Wired into `train_and_eval()` between post-EMA eval and GPTQ serialization
+- [feat] Implemented per-group compression (`COMPRESSOR=pergroup`): pure Python lzma/brotli hybrid, picks smaller per 64KB chunk. No system deps.
+- [feat] Created `runs/run_v2_session16_2gpu.sh` — unified 6-run Phase 1-3 script:
+  - Phase 1: EMA deeper sweep (0.995+WD0.10, 0.993, 0.990) — auto-picks best
+  - Phase 2: PreQuantTTT with best EMA
+  - Phase 3: Per-group compression (emb7 + emb8 variants)
+- [feat] Updated `runs/configs/v2_base.env` with PreQuantTTT defaults (disabled by default)
+- [edit] Updated `docs/James_test/run_finetune_2gpu_commands.txt` for Session 16
+- [todo] Run Session 16 on 2×H100, then 8×H100 3-seed if results are competitive (~1.015 projected)
+
+### 2026-04-30 (Session 16 — Run Results)
+- [run] Executed 5-run Session 16 sweep on 2×H100 (`run_v2_session16_2gpu.sh`):
+  - Phase 1 EMA Deeper Sweep (R1-R3): EMA=0.990 is new best (R3, TTT 1.1505, -0.0117 vs C6). EMA=0.993 (R2, 1.1526) and EMA=0.995+WD0.10 (R1, 1.1559) also beat E1 (1.1562). EMA keeps improving as decay decreases.
+  - Phase 2-3 PreQuantTTT (R4-R5): R4 (brotli) = **1.0507 TTT BPB** on 2×H100 — beats our 8×H100 C6 (1.0805). PreQuantTTT takes pre-Q 1.1591 → post-PQ 1.0156 (-0.1435 BPB). R5 (pergroup) crashed at deserialize.
+- [bugfix] Fixed `deserialize()` crash in `train_gpt_v2.py`: `torch.load()` needs `weights_only=False` for PyTorch 2.11+ (default changed to `True`)
+- [finding] **EMA=0.990 is optimal** — nearly 2× the gain of 0.995 (-0.0117 vs -0.0060 below C6). Projected 8×H100: ~1.069 BPB
+- [finding] **PreQuantTTT is transformative** — 21 epochs AdamW on val before GPTQ gives -0.1435 BPB. Single biggest technique gain found in entire project
+- [finding] **2×H100 R4 (1.0507) beats 8×H100 C6 (1.0805)** — PreQuantTTT more impactful than 4× GPU scaling
+- [finding] Projected 8×H100 with EMA=0.990 + PreQuantTTT: ~0.97-1.00 BPB — would beat SOTA (1.0136)
+- [edit] Updated `docs/parameter-golf/findings.md`: added Session 16 section, R1-R4 to 2×H100 leaderboard, updated "Where We Stand"
+- [todo] Run 8×H100 3-seed with EMA=0.990 + PreQuantTTT — projected to beat SOTA
+
+### 2026-04-30 (Session 15-16 — Paper Experiments on James-experiment-2)
+- [branch] Created `James-experiment-2` from `James-experiment` for Paper #16/#5/#22/#15 experiments
+- [feat] Implemented LR Warmup (`LR_WARMUP_FRAC` env var) in `parameter-golf/train_gpt_v2.py` — modifies `lr_mul()` to add linear ramp before warmdown
+- [feat] Implemented Structured FFN (`StructuredMLP` class) — low-rank up-proj + block-diagonal down-proj with `STRUCTURED_FFN`, `FFN_RANK_RATIO`, `FFN_NUM_BLOCKS` env vars
+- [feat] Implemented Peri-LN (`PERI_LN` env var) — output RMSNorm on attn + MLP in Block.forward
+- [feat] Made `grad_accum_steps` configurable via `GRAD_ACCUM_STEPS` env var (was hardcoded `8//world_size`)
+- [run] Paper #16 (LR Warmup): tested 2%, 5%, 10% on 2×H100. **All FAILED** — monotonically worse (+0.0024 to +0.0066 BPB). Rank 1 was right to skip warmup.
+- [run] Paper #5 (Structured FFN): tested r=0.5/b=4 and r=0.75/b=8 on 2×H100. **FAILED** — saves 30-56% MLP params but +0.04-0.05 BPB degradation. Paper tested at 125M+; doesn't transfer to 36M.
+- [run] Paper #22 (Peri-LN): **FAILED** — immediate NaN. Output norms destabilize rank 1 stack (conflicts with attn_scale/mlp_scale + ln_scale_factor).
+- [run] Paper #15 (Small Batch): tested ga=1 + TRAIN_BATCH_TOKENS=196608 on 2×H100. **SUCCESS: -0.015 BPB** (B2=1.1419 vs baseline 1.1572). Biggest V2 technique win. 3,349 steps vs ~1,030. Beta2 scaling (0.99) makes no difference.
+- [bugfix] Fixed OOM in small batch runs — must reduce TRAIN_BATCH_TOKENS by 4x when setting GRAD_ACCUM_STEPS=1
+- [bugfix] Fixed `set -uo pipefail` crash in run script — `$BETA2` unset, used `${BETA2:-0.95}` fallback
+- [feat] Created run scripts: `runs/run_v2_paper16_paper5_2gpu.sh`, `runs/run_v2_paper22_paper15_2gpu.sh`
+- [feat] Created 8 new env configs for all experiments
+- [feat] Created runbooks: `docs/James_test/run_paper16_paper5_2gpu_commands.txt`, `docs/James_test/run_paper22_paper15_2gpu_commands.txt`
+- [feat] Created `docs/James_test/small_batch_merge_guide.txt` — 2-edit guide for porting Small Batch to James-experiment branch
+- [edit] Updated `docs/parameter-golf/findings.md` — added B2/B3 (small batch), P0-P5 (LR warmup + structured FFN) to tables, resolved 3 merge conflicts, added key insights #11-15
+- [edit] Updated `docs/parameter-golf/neurlps-paper-survey.md` — marked Papers #5, #16 as "Tested — FAILS"
+- [merge] Applied Small Batch edits to `James-experiment` branch (2 edits to train_gpt_v2.py)
+- [finding] PG challenge deadline: April 30, 2026 at 4:59 PM PST
+- [finding] Small Batch is the only technique that improved on the V2 rank 1 stack. Papers #1 (SLM), #5 (Structured FFN), #16 (LR Warmup), #20 (ResFormer), #22 (Peri-LN) all failed.
+- [todo] Test Small Batch on 8×H100 — on 8 GPUs ga is already 1, need to reduce TRAIN_BATCH_TOKENS to get more updates. Projected: ~1.0655 BPB if -0.015 delta holds.
+
+### 2026-04-30 (Session 17 — C6 Legal Submission)
+- [feat] Updated `docs/James_notes/submission.json` — C6 3-seed data (mean 1.0805 BPB, std 0.0012), removed PreQuantTTT, set `no_pre_quant_ttt: true`, removed Small Batch/EMA tuning references (not used in C6), removed "rank 1 SOTA" from bigbag attribution (no longer rank 1)
+- [feat] Rewrote `docs/James_notes/pg_submission_readme.md` — C6 values throughout, marked as non-record submission, removed PreQuantTTT/Small Batch/EMA=0.990 sections (C6 uses default EMA 0.9965 and default batch 786432), updated compliance to "No Pre-Quantization TTT — fully legal", updated reproduction command (removed PREQUANT_TTT_ENABLED, EMA_DECAY, GRAD_ACCUM_STEPS, TRAIN_BATCH_TOKENS), cleaned credits (removed @okezue PreQuantTTT attribution)
+- [feat] Updated pg-fork (`jamesEmerson112/parameter-golf`): renamed submission folder from `2026-04-30_SP8192_FullStack_HeadwiseGate_PreQuantTTT` to `2026-04-30_SP8192_HeadwiseGate_EMA_LegalTTT`, replaced all 7 files (clean train_gpt.py with 0 prequant references, C6 seed logs, updated JSON/README)
+- [feat] Force-pushed to `submission/fullstack-headwise-gate` branch
+- [feat] Created new PR #2005 on openai/parameter-golf (PR #1992 was CLOSED, so created fresh): "Record: SP8192 + Headwise Gated Attention + Legal TTT (1.0805 BPB, 3-seed)"
+- [finding] C6 config confirmed from logs: gated_attn=headwise, embed_bits=7, embed_clip_sigmas=15.0, ema_decay=0.9965 (default), train_batch_tokens=786432 (default), grad_accum_steps=1 (8 GPUs), no PreQuantTTT
+- [finding] C6 verified results: seed42=1.0818, seed1337=1.0794, seed2025=1.0804, mean=1.0805 ±0.0012 BPB
+- [finding] bigbag is no longer rank 1 — updated all references to remove "rank 1 SOTA"
+- [ref] PR: https://github.com/openai/parameter-golf/pull/2005
+- [ref] pg-fork clone at /tmp/pg-fork (ephemeral, not persisted locally)

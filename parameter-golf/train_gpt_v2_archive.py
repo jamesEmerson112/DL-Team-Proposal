@@ -4,7 +4,7 @@ import random,re,subprocess,sys,time,uuid,numpy as np,sentencepiece as spm,torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch import Tensor,nn
 from flash_attn_interface import flash_attn_func as flash_attn_3_func
-class Hyperparameters:data_dir=os.environ.get('DATA_DIR','./data/');seed=int(os.environ.get('SEED',1337));run_id=os.environ.get('RUN_ID',str(uuid.uuid4()));iterations=int(os.environ.get('ITERATIONS',20000));warmdown_frac=float(os.environ.get('WARMDOWN_FRAC',.72));warmup_steps=int(os.environ.get('WARMUP_STEPS',20));train_batch_tokens=int(os.environ.get('TRAIN_BATCH_TOKENS',786432));train_seq_len=int(os.environ.get('TRAIN_SEQ_LEN',2048));train_log_every=int(os.environ.get('TRAIN_LOG_EVERY',500));max_wallclock_seconds=float(os.environ.get('MAX_WALLCLOCK_SECONDS',6e2));val_batch_tokens=int(os.environ.get('VAL_BATCH_TOKENS',524288));eval_seq_len=int(os.environ.get('EVAL_SEQ_LEN',2048));val_loss_every=int(os.environ.get('VAL_LOSS_EVERY',4000));sliding_window_enabled=bool(int(os.environ.get('SLIDING_WINDOW_ENABLED','1')));vocab_size=int(os.environ.get('VOCAB_SIZE',8192));num_layers=int(os.environ.get('NUM_LAYERS',11));xsa_last_n=int(os.environ.get('XSA_LAST_N',11));model_dim=int(os.environ.get('MODEL_DIM',512));embedding_dim=int(os.environ.get('EMBEDDING_DIM',512));num_kv_heads=int(os.environ.get('NUM_KV_HEADS',4));num_heads=int(os.environ.get('NUM_HEADS',8));mlp_mult=float(os.environ.get('MLP_MULT',4.));skip_gates_enabled=bool(int(os.environ.get('SKIP_GATES_ENABLED','1')));tie_embeddings=bool(int(os.environ.get('TIE_EMBEDDINGS','1')));logit_softcap=float(os.environ.get('LOGIT_SOFTCAP',3e1));rope_base=float(os.environ.get('ROPE_BASE',1e4));rope_dims=int(os.environ.get('ROPE_DIMS',16));rope_train_seq_len=int(os.environ.get('ROPE_TRAIN_SEQ_LEN',2048));ln_scale=bool(int(os.environ.get('LN_SCALE','1')));qk_gain_init=float(os.environ.get('QK_GAIN_INIT',5.));num_loops=int(os.environ.get('NUM_LOOPS',2));loop_start=int(os.environ.get('LOOP_START',3));loop_end=int(os.environ.get('LOOP_END',5));enable_looping_at=float(os.environ.get('ENABLE_LOOPING_AT',.35));parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',7));min_lr=float(os.environ.get('MIN_LR',.0));embed_lr=float(os.environ.get('EMBED_LR',.6));head_lr=float(os.environ.get('HEAD_LR',.008));tied_embed_lr=float(os.environ.get('TIED_EMBED_LR',.03));tied_embed_init_std=float(os.environ.get('TIED_EMBED_INIT_STD',.005));matrix_lr=float(os.environ.get('MATRIX_LR',.022));scalar_lr=float(os.environ.get('SCALAR_LR',.02));muon_momentum=float(os.environ.get('MUON_MOMENTUM',.99));muon_backend_steps=int(os.environ.get('MUON_BACKEND_STEPS',5));muon_momentum_warmup_start=float(os.environ.get('MUON_MOMENTUM_WARMUP_START',.92));muon_momentum_warmup_steps=int(os.environ.get('MUON_MOMENTUM_WARMUP_STEPS',1500));muon_row_normalize=bool(int(os.environ.get('MUON_ROW_NORMALIZE','1')));beta1=float(os.environ.get('BETA1',.9));beta2=float(os.environ.get('BETA2',.95));adam_eps=float(os.environ.get('ADAM_EPS',1e-08));grad_clip_norm=float(os.environ.get('GRAD_CLIP_NORM',.3));eval_stride=int(os.environ.get('EVAL_STRIDE',64));muon_beta2=float(os.environ.get('MUON_BETA2',.95));adam_wd=float(os.environ.get('ADAM_WD',.02));muon_wd=float(os.environ.get('MUON_WD',.095));embed_wd=float(os.environ.get('EMBED_WD',.085));ema_decay=float(os.environ.get('EMA_DECAY',.9965));ttt_enabled=bool(int(os.environ.get('TTT_ENABLED','0')));ttt_lr=float(os.environ.get('TTT_LR',.005));ttt_epochs=int(os.environ.get('TTT_EPOCHS',3));ttt_momentum=float(os.environ.get('TTT_MOMENTUM',.9));ttt_chunk_tokens=int(os.environ.get('TTT_CHUNK_TOKENS',32768));etlb_enabled=bool(int(os.environ.get('ETLB_ENABLED','0')));etlb_lr=float(os.environ.get('ETLB_LR',.05));etlb_steps=int(os.environ.get('ETLB_STEPS',5));etlb_clip=float(os.environ.get('ETLB_CLIP',3.));compressor=os.environ.get('COMPRESSOR','brotli');gated_attn=os.environ.get('GATED_ATTN','none');value_residual_alpha=float(os.environ.get('VALUE_RESIDUAL_ALPHA','0.0'));gptq_calibration_batches=int(os.environ.get('GPTQ_CALIBRATION_BATCHES',64));gptq_reserve_seconds=float(os.environ.get('GPTQ_RESERVE_SECONDS',12.));matrix_bits=int(os.environ.get('MATRIX_BITS',6));embed_bits=int(os.environ.get('EMBED_BITS',8));matrix_clip_sigmas=float(os.environ.get('MATRIX_CLIP_SIGMAS',12.85));embed_clip_sigmas=float(os.environ.get('EMBED_CLIP_SIGMAS',2e1));distributed='RANK'in os.environ and'WORLD_SIZE'in os.environ;rank=int(os.environ.get('RANK','0'));world_size=int(os.environ.get('WORLD_SIZE','1'));local_rank=int(os.environ.get('LOCAL_RANK','0'));is_main_process=rank==0;grad_accum_steps=8//world_size;datasets_dir=os.path.join(data_dir,'datasets',f"fineweb10B_sp{vocab_size}");train_files=os.path.join(datasets_dir,'fineweb_train_*.bin');val_files=os.path.join(datasets_dir,'fineweb_val_*.bin');tokenizer_path=os.path.join(data_dir,'tokenizers',f"fineweb_{vocab_size}_bpe.model");logfile=f"logs/{run_id}.txt";model_path='final_model.pt';quantized_model_path='final_model.int6.ptz'
+class Hyperparameters:data_dir=os.environ.get('DATA_DIR','./data/');seed=int(os.environ.get('SEED',1337));run_id=os.environ.get('RUN_ID',str(uuid.uuid4()));iterations=int(os.environ.get('ITERATIONS',20000));warmdown_frac=float(os.environ.get('WARMDOWN_FRAC',.72));warmup_steps=int(os.environ.get('WARMUP_STEPS',20));train_batch_tokens=int(os.environ.get('TRAIN_BATCH_TOKENS',786432));train_seq_len=int(os.environ.get('TRAIN_SEQ_LEN',2048));train_log_every=int(os.environ.get('TRAIN_LOG_EVERY',500));max_wallclock_seconds=float(os.environ.get('MAX_WALLCLOCK_SECONDS',6e2));val_batch_tokens=int(os.environ.get('VAL_BATCH_TOKENS',524288));eval_seq_len=int(os.environ.get('EVAL_SEQ_LEN',2048));val_loss_every=int(os.environ.get('VAL_LOSS_EVERY',4000));sliding_window_enabled=bool(int(os.environ.get('SLIDING_WINDOW_ENABLED','1')));vocab_size=int(os.environ.get('VOCAB_SIZE',8192));num_layers=int(os.environ.get('NUM_LAYERS',11));xsa_last_n=int(os.environ.get('XSA_LAST_N',11));model_dim=int(os.environ.get('MODEL_DIM',512));embedding_dim=int(os.environ.get('EMBEDDING_DIM',512));num_kv_heads=int(os.environ.get('NUM_KV_HEADS',4));num_heads=int(os.environ.get('NUM_HEADS',8));mlp_mult=float(os.environ.get('MLP_MULT',4.));skip_gates_enabled=bool(int(os.environ.get('SKIP_GATES_ENABLED','1')));tie_embeddings=bool(int(os.environ.get('TIE_EMBEDDINGS','1')));logit_softcap=float(os.environ.get('LOGIT_SOFTCAP',3e1));rope_base=float(os.environ.get('ROPE_BASE',1e4));rope_dims=int(os.environ.get('ROPE_DIMS',16));rope_train_seq_len=int(os.environ.get('ROPE_TRAIN_SEQ_LEN',2048));ln_scale=bool(int(os.environ.get('LN_SCALE','1')));qk_gain_init=float(os.environ.get('QK_GAIN_INIT',5.));num_loops=int(os.environ.get('NUM_LOOPS',2));loop_start=int(os.environ.get('LOOP_START',3));loop_end=int(os.environ.get('LOOP_END',5));enable_looping_at=float(os.environ.get('ENABLE_LOOPING_AT',.35));parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',7));min_lr=float(os.environ.get('MIN_LR',.0));embed_lr=float(os.environ.get('EMBED_LR',.6));head_lr=float(os.environ.get('HEAD_LR',.008));tied_embed_lr=float(os.environ.get('TIED_EMBED_LR',.03));tied_embed_init_std=float(os.environ.get('TIED_EMBED_INIT_STD',.005));matrix_lr=float(os.environ.get('MATRIX_LR',.022));scalar_lr=float(os.environ.get('SCALAR_LR',.02));muon_momentum=float(os.environ.get('MUON_MOMENTUM',.99));muon_backend_steps=int(os.environ.get('MUON_BACKEND_STEPS',5));muon_momentum_warmup_start=float(os.environ.get('MUON_MOMENTUM_WARMUP_START',.92));muon_momentum_warmup_steps=int(os.environ.get('MUON_MOMENTUM_WARMUP_STEPS',1500));muon_row_normalize=bool(int(os.environ.get('MUON_ROW_NORMALIZE','1')));beta1=float(os.environ.get('BETA1',.9));beta2=float(os.environ.get('BETA2',.95));adam_eps=float(os.environ.get('ADAM_EPS',1e-08));grad_clip_norm=float(os.environ.get('GRAD_CLIP_NORM',.3));eval_stride=int(os.environ.get('EVAL_STRIDE',64));muon_beta2=float(os.environ.get('MUON_BETA2',.95));adam_wd=float(os.environ.get('ADAM_WD',.02));muon_wd=float(os.environ.get('MUON_WD',.095));embed_wd=float(os.environ.get('EMBED_WD',.085));ema_decay=float(os.environ.get('EMA_DECAY',.9965));ttt_enabled=bool(int(os.environ.get('TTT_ENABLED','0')));ttt_lr=float(os.environ.get('TTT_LR',.005));ttt_epochs=int(os.environ.get('TTT_EPOCHS',3));ttt_momentum=float(os.environ.get('TTT_MOMENTUM',.9));ttt_chunk_tokens=int(os.environ.get('TTT_CHUNK_TOKENS',32768));etlb_enabled=bool(int(os.environ.get('ETLB_ENABLED','0')));etlb_lr=float(os.environ.get('ETLB_LR',.05));etlb_steps=int(os.environ.get('ETLB_STEPS',5));etlb_clip=float(os.environ.get('ETLB_CLIP',3.));compressor=os.environ.get('COMPRESSOR','brotli');gated_attn=os.environ.get('GATED_ATTN','none');value_residual_alpha=float(os.environ.get('VALUE_RESIDUAL_ALPHA','0.0'));gptq_calibration_batches=int(os.environ.get('GPTQ_CALIBRATION_BATCHES',64));gptq_reserve_seconds=float(os.environ.get('GPTQ_RESERVE_SECONDS',12.));matrix_bits=int(os.environ.get('MATRIX_BITS',6));embed_bits=int(os.environ.get('EMBED_BITS',8));matrix_clip_sigmas=float(os.environ.get('MATRIX_CLIP_SIGMAS',12.85));embed_clip_sigmas=float(os.environ.get('EMBED_CLIP_SIGMAS',2e1));smear_gate_enabled=bool(int(os.environ.get('SMEAR_GATE_ENABLED','0')));lqer_enabled=bool(int(os.environ.get('LQER_ENABLED','0')));lqer_rank=int(os.environ.get('LQER_RANK',4));lqer_factor_bits=int(os.environ.get('LQER_FACTOR_BITS',4));lqer_group_size=int(os.environ.get('LQER_GROUP_SIZE',64));lqer_top_k=int(os.environ.get('LQER_TOP_K',3));distributed='RANK'in os.environ and'WORLD_SIZE'in os.environ;rank=int(os.environ.get('RANK','0'));world_size=int(os.environ.get('WORLD_SIZE','1'));local_rank=int(os.environ.get('LOCAL_RANK','0'));is_main_process=rank==0;grad_accum_steps=int(os.environ.get('GRAD_ACCUM_STEPS',str(8//world_size)));_ds_override=os.environ.get('DATASETS_DIR','');_tp_override=os.environ.get('TOKENIZER_PATH','');datasets_dir=_ds_override or os.path.join(data_dir,'datasets',f"fineweb10B_sp{vocab_size}");train_files=os.path.join(datasets_dir,'fineweb_train_*.bin');val_files=os.path.join(datasets_dir,'fineweb_val_*.bin');tokenizer_path=_tp_override or os.path.join(data_dir,'tokenizers',f"fineweb_{vocab_size}_bpe.model");ttt_lora_enabled=bool(int(os.environ.get('TTT_LORA_ENABLED','0')));ttt_lora_rank=int(os.environ.get('TTT_LORA_RANK',8));ttt_lora_lr=float(os.environ.get('TTT_LORA_LR',.01));ttt_lora_chunk_size=int(os.environ.get('TTT_LORA_CHUNK_SIZE',256));ttt_lora_eval_seq_len=int(os.environ.get('TTT_LORA_EVAL_SEQ_LEN',1024));ttt_lora_batch_size=int(os.environ.get('TTT_LORA_BATCH_SIZE',64));logfile=f"logs/{run_id}.txt";model_path='final_model.pt';quantized_model_path='final_model.int6.ptz'
 _logger_hparams=None
 def set_logging_hparams(h):global _logger_hparams;_logger_hparams=h
 def log(msg,console=True):
@@ -89,7 +89,7 @@ def apply_rotary_emb(x,cos,sin,rope_dims=0):
 	if rope_dims>0 and rope_dims<x.size(-1):x_rope,x_pass=x[...,:rope_dims],x[...,rope_dims:];half=rope_dims//2;x1,x2=x_rope[...,:half],x_rope[...,half:];x_rope=torch.cat((x1*cos+x2*sin,x1*-sin+x2*cos),dim=-1);return torch.cat((x_rope,x_pass),dim=-1)
 	half=x.size(-1)//2;x1,x2=x[...,:half],x[...,half:];return torch.cat((x1*cos+x2*sin,x1*-sin+x2*cos),dim=-1)
 class CausalSelfAttention(nn.Module):
-	def __init__(self,dim,num_heads,num_kv_heads,rope_base,qk_gain_init,train_seq_len,gated_attn='none'):
+	def __init__(self,dim,num_heads,num_kv_heads,rope_base,qk_gain_init,train_seq_len,gated_attn='none',smear_gate=False):
 		super().__init__()
 		if dim%num_heads!=0:raise ValueError('model_dim must be divisible by num_heads')
 		if num_heads%num_kv_heads!=0:raise ValueError('num_heads must be divisible by num_kv_heads')
@@ -99,12 +99,16 @@ class CausalSelfAttention(nn.Module):
 		elif gated_attn=='elementwise':self.gate_dim=dim
 		else:self.gate_dim=0
 		kv_dim=self.num_kv_heads*self.head_dim;self.c_q=CastedLinear(dim,dim+self.gate_dim,bias=False);self.c_k=CastedLinear(dim,kv_dim,bias=False);self.c_v=CastedLinear(dim,kv_dim,bias=False);self.proj=CastedLinear(dim,dim,bias=False);self.proj._zero_init=True;self.q_gain=nn.Parameter(torch.full((num_heads,),qk_gain_init,dtype=torch.float32));self.rope_dims=0;self.rotary=Rotary(self.head_dim,base=rope_base,train_seq_len=train_seq_len);self.use_xsa=False
+		self.smear_gate=nn.Parameter(torch.zeros(1,1,dim))if smear_gate else None
 	def _xsa_efficient(self,y,v):B,T,H,D=y.shape;Hkv=v.size(-2);group=H//Hkv;y_g=y.reshape(B,T,Hkv,group,D);vn=F.normalize(v,dim=-1).unsqueeze(-2);proj=(y_g*vn).sum(dim=-1,keepdim=True)*vn;return(y_g-proj).reshape(B,T,H,D)
-	def forward(self,x,v0=None,vr_alpha=0.0):
+	def forward(self,x,v0=None,vr_alpha=0.0,input_ids=None,lora=None,block_idx=0):
 		bsz,seqlen,dim=x.shape;q_out=self.c_q(x)
+		if lora is not None:q_out=q_out+lora.q_loras[block_idx](x)
 		if self.gate_dim>0:q_raw,gate_logits=q_out.split([dim,self.gate_dim],dim=-1)
 		else:q_raw=q_out;gate_logits=None
-		q=q_raw.reshape(bsz,seqlen,self.num_heads,self.head_dim);k=self.c_k(x).reshape(bsz,seqlen,self.num_kv_heads,self.head_dim);v=self.c_v(x).reshape(bsz,seqlen,self.num_kv_heads,self.head_dim)
+		q=q_raw.reshape(bsz,seqlen,self.num_heads,self.head_dim);k=self.c_k(x).reshape(bsz,seqlen,self.num_kv_heads,self.head_dim);v_raw=self.c_v(x)
+		if lora is not None:v_raw=v_raw+lora.v_loras[block_idx](x)
+		v=v_raw.reshape(bsz,seqlen,self.num_kv_heads,self.head_dim)
 		cache_v=(vr_alpha>0 and v0 is None);v_before_repeat=v
 		if v0 is not None and vr_alpha>0:v=(1-vr_alpha)*v+vr_alpha*v0
 		q=F.rms_norm(q,(q.size(-1),));k=F.rms_norm(k,(k.size(-1),));cos,sin=self.rotary(seqlen,x.device,q.dtype);q=apply_rotary_emb(q,cos,sin,self.rope_dims);k=apply_rotary_emb(k,cos,sin,self.rope_dims);q=q*self.q_gain.to(dtype=q.dtype)[None,None,:,None];y=flash_attn_3_func(q,k,v,causal=True)
@@ -112,16 +116,21 @@ class CausalSelfAttention(nn.Module):
 		if gate_logits is not None:
 			if self.gated_attn=='headwise':gate=torch.sigmoid(gate_logits).unsqueeze(-1);y=y*gate
 			elif self.gated_attn=='elementwise':gate=torch.sigmoid(gate_logits).reshape(bsz,seqlen,self.num_heads,self.head_dim);y=y*gate
-		y=y.reshape(bsz,seqlen,dim);out=self.proj(y)
+		y=y.reshape(bsz,seqlen,dim)
+		if self.smear_gate is not None:
+			g=self.smear_gate.to(dtype=y.dtype)
+			if input_ids is not None:not_bos=(input_ids[:,1:]!=1).to(y.dtype).unsqueeze(-1);y=torch.cat([y[:,:1],y[:,1:]+g*y[:,:-1]*not_bos],dim=1)
+			else:y=torch.cat([y[:,:1],y[:,1:]+g*y[:,:-1]],dim=1)
+		out=self.proj(y)
 		if cache_v:return out,v_before_repeat
 		return out
 class MLP(nn.Module):
 	def __init__(self,dim,mlp_mult):super().__init__();hidden=int(mlp_mult*dim);self.fc=CastedLinear(dim,hidden,bias=False);self.proj=CastedLinear(hidden,dim,bias=False);self.proj._zero_init=True
 	def forward(self,x):return self.proj(F.leaky_relu(self.fc(x),negative_slope=.5).square())
 class Block(nn.Module):
-	def __init__(self,dim,num_heads,num_kv_heads,mlp_mult,rope_base,qk_gain_init,train_seq_len,layer_idx=0,ln_scale=False,gated_attn='none'):super().__init__();self.attn_norm=RMSNorm();self.mlp_norm=RMSNorm();self.attn=CausalSelfAttention(dim,num_heads,num_kv_heads,rope_base,qk_gain_init,train_seq_len,gated_attn=gated_attn);self.mlp=MLP(dim,mlp_mult);self.attn_scale=nn.Parameter(torch.ones(dim,dtype=torch.float32));self.mlp_scale=nn.Parameter(torch.ones(dim,dtype=torch.float32));self.resid_mix=nn.Parameter(torch.stack((torch.ones(dim),torch.zeros(dim))).float());self.ln_scale_factor=1./math.sqrt(layer_idx+1)if ln_scale else 1.;self.parallel=False
-	def forward(self,x,x0,v0=None,vr_alpha=0.0):
-		mix=self.resid_mix.to(dtype=x.dtype);x_in=mix[0][None,None,:]*x+mix[1][None,None,:]*x0;attn_result=self.attn(self.attn_norm(x_in)*self.ln_scale_factor,v0=v0,vr_alpha=vr_alpha)
+	def __init__(self,dim,num_heads,num_kv_heads,mlp_mult,rope_base,qk_gain_init,train_seq_len,layer_idx=0,ln_scale=False,gated_attn='none',smear_gate=False):super().__init__();self.attn_norm=RMSNorm();self.mlp_norm=RMSNorm();self.attn=CausalSelfAttention(dim,num_heads,num_kv_heads,rope_base,qk_gain_init,train_seq_len,gated_attn=gated_attn,smear_gate=smear_gate);self.mlp=MLP(dim,mlp_mult);self.attn_scale=nn.Parameter(torch.ones(dim,dtype=torch.float32));self.mlp_scale=nn.Parameter(torch.ones(dim,dtype=torch.float32));self.resid_mix=nn.Parameter(torch.stack((torch.ones(dim),torch.zeros(dim))).float());self.ln_scale_factor=1./math.sqrt(layer_idx+1)if ln_scale else 1.;self.parallel=False
+	def forward(self,x,x0,v0=None,vr_alpha=0.0,input_ids=None,lora=None,block_idx=0):
+		mix=self.resid_mix.to(dtype=x.dtype);x_in=mix[0][None,None,:]*x+mix[1][None,None,:]*x0;attn_result=self.attn(self.attn_norm(x_in)*self.ln_scale_factor,v0=v0,vr_alpha=vr_alpha,input_ids=input_ids,lora=lora,block_idx=block_idx)
 		if isinstance(attn_result,tuple):attn_out,v_cached=attn_result
 		else:attn_out=attn_result;v_cached=None
 		if self.parallel:mlp_out=self.mlp(self.mlp_norm(x_in)*self.ln_scale_factor);x_out=x_in+self.attn_scale.to(dtype=x_in.dtype)[None,None,:]*attn_out+self.mlp_scale.to(dtype=x_in.dtype)[None,None,:]*mlp_out
@@ -135,7 +144,7 @@ class GPT(nn.Module):
 		self.tie_embeddings=h.tie_embeddings;self.tied_embed_init_std=h.tied_embed_init_std;self.logit_softcap=h.logit_softcap;self.tok_emb=nn.Embedding(h.vocab_size,h.embedding_dim)
 		if h.embedding_dim!=h.model_dim:self.embed_proj=CastedLinear(h.embedding_dim,h.model_dim,bias=False);self.head_proj=CastedLinear(h.model_dim,h.embedding_dim,bias=False)
 		else:self.embed_proj=None;self.head_proj=None
-		self.num_encoder_layers=h.num_layers//2;self.num_decoder_layers=h.num_layers-self.num_encoder_layers;self.value_residual_alpha=h.value_residual_alpha;self.blocks=nn.ModuleList([Block(h.model_dim,h.num_heads,h.num_kv_heads,h.mlp_mult,h.rope_base,h.qk_gain_init,h.train_seq_len,layer_idx=i,ln_scale=h.ln_scale,gated_attn=h.gated_attn)for i in range(h.num_layers)])
+		self.num_encoder_layers=h.num_layers//2;self.num_decoder_layers=h.num_layers-self.num_encoder_layers;self.value_residual_alpha=h.value_residual_alpha;self.smear_gate_enabled=h.smear_gate_enabled;self.blocks=nn.ModuleList([Block(h.model_dim,h.num_heads,h.num_kv_heads,h.mlp_mult,h.rope_base,h.qk_gain_init,h.train_seq_len,layer_idx=i,ln_scale=h.ln_scale,gated_attn=h.gated_attn,smear_gate=h.smear_gate_enabled)for i in range(h.num_layers)])
 		if h.rope_dims>0:
 			head_dim=h.model_dim//h.num_heads
 			for block in self.blocks:block.attn.rope_dims=h.rope_dims;block.attn.rotary=Rotary(head_dim,base=h.rope_base,train_seq_len=h.train_seq_len,rope_dims=h.rope_dims)
@@ -158,12 +167,12 @@ class GPT(nn.Module):
 			if isinstance(module,nn.Linear):
 				if getattr(module,'_zero_init',False):nn.init.zeros_(module.weight)
 				elif module.weight.ndim==2 and module.weight.shape[0]>=64 and module.weight.shape[1]>=64:nn.init.orthogonal_(module.weight,gain=1.)
-	def forward_logits(self,input_ids):
+	def forward_logits(self,input_ids,lora=None):
 		x=self.tok_emb(input_ids);x=F.rms_norm(x,(x.size(-1),))
 		if self.embed_proj is not None:x=self.embed_proj(x)
-		x0=x;skips=[];vr_alpha=self.value_residual_alpha;v0=None;enc_iter=self.encoder_indices if self.looping_active else range(self.num_encoder_layers);dec_iter=self.decoder_indices if self.looping_active else range(self.num_encoder_layers,self.num_encoder_layers+self.num_decoder_layers)
+		x0=x;skips=[];vr_alpha=self.value_residual_alpha;v0=None;enc_iter=self.encoder_indices if self.looping_active else range(self.num_encoder_layers);dec_iter=self.decoder_indices if self.looping_active else range(self.num_encoder_layers,self.num_encoder_layers+self.num_decoder_layers);_ids=input_ids if self.smear_gate_enabled else None
 		for i in enc_iter:
-			result=self.blocks[i](x,x0,v0=v0,vr_alpha=vr_alpha)
+			result=self.blocks[i](x,x0,v0=v0,vr_alpha=vr_alpha,input_ids=_ids,lora=lora,block_idx=i)
 			if isinstance(result,tuple):x,v0=result
 			else:x=result
 			skips.append(x)
@@ -172,13 +181,14 @@ class GPT(nn.Module):
 				scaled_skip=self.skip_weights[skip_idx].to(dtype=x.dtype)[None,None,:]*skips.pop()
 				if self.skip_gates is not None:g=torch.sigmoid(self.skip_gates[skip_idx].to(dtype=x.dtype))[None,None,:];x=torch.lerp(scaled_skip,x,g)
 				else:x=x+scaled_skip
-			result=self.blocks[i](x,x0,v0=v0,vr_alpha=vr_alpha)
+			result=self.blocks[i](x,x0,v0=v0,vr_alpha=vr_alpha,input_ids=_ids,lora=lora,block_idx=i)
 			if isinstance(result,tuple):x,_=result
 			else:x=result
 		x=self.final_norm(x)
 		if self.head_proj is not None:x=self.head_proj(x)
 		if self.tie_embeddings:logits_proj=F.linear(x,self.tok_emb.weight)
 		else:logits_proj=self.lm_head(x)
+		if lora is not None:logits_proj=logits_proj+lora.lm_head_lora(x)
 		return self.logit_softcap*torch.tanh(logits_proj/self.logit_softcap)
 	def forward(self,input_ids,target_ids):logits=self.forward_logits(input_ids);return F.cross_entropy(logits.reshape(-1,logits.size(-1)).float(),target_ids.reshape(-1),reduction='mean')
 def classify_param(name):
@@ -219,7 +229,7 @@ class Muon(torch.optim.Optimizer):
 				if wd>.0:p.data.mul_(1.-lr*wd)
 				g=updates_flat[curr:curr+p.numel()].view_as(p).to(dtype=p.dtype);p.add_(g,alpha=-lr);curr+=p.numel()
 		return loss
-CONTROL_TENSOR_NAME_PATTERNS=tuple(pattern for pattern in os.environ.get('CONTROL_TENSOR_NAME_PATTERNS','attn_scale,attn_scales,mlp_scale,mlp_scales,resid_mix,resid_mixes,q_gain,skip_weight,skip_weights,skip_gates').split(',')if pattern)
+CONTROL_TENSOR_NAME_PATTERNS=tuple(pattern for pattern in os.environ.get('CONTROL_TENSOR_NAME_PATTERNS','attn_scale,attn_scales,mlp_scale,mlp_scales,resid_mix,resid_mixes,q_gain,skip_weight,skip_weights,skip_gates,smear_gate').split(',')if pattern)
 class Optimizers:
 	def __init__(self,h,base_model):
 		block_named_params=list(base_model.blocks.named_parameters());matrix_params=[p for(name,p)in block_named_params if p.ndim==2 and not any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)];scalar_params=[p for(name,p)in block_named_params if p.ndim<2 or any(pattern in name for pattern in CONTROL_TENSOR_NAME_PATTERNS)]
@@ -278,17 +288,28 @@ def gptq_quantize_weight(w,H,clip_sigmas=3.,clip_range=63,block_size=128):
 		if i2<cols:W_work[:,i2:]-=Err@Hinv[i1:i2,i2:]
 	return Q[:,invperm],s
 def gptq_mixed_quantize(state_dict,hessians,h):
-	result={};meta={}
+	result={};meta={};quant_errors={}
 	for(name,tensor)in state_dict.items():
 		t=tensor.detach().cpu().contiguous()
 		if not t.is_floating_point()or t.numel()<=65536:result[name]=t.to(torch.float16)if t.is_floating_point()else t;meta[name]='passthrough (float16)';continue
 		cs=h.embed_clip_sigmas if'tok_emb'in name else h.matrix_clip_sigmas;bits=h.embed_bits if'tok_emb'in name else h.matrix_bits;q,s=gptq_quantize_weight(t,hessians[name],clip_sigmas=cs,clip_range=2**(bits-1)-1);result[name+'.q']=q;result[name+'.scale']=s;meta[name]=f"gptq (int{bits})"
+		if h.lqer_enabled:
+			W_deq=(q.float()*s.float().view(q.shape[0],*[1]*(q.ndim-1)));err_norm=float((t.float()-W_deq).norm());quant_errors[name]=(err_norm,t.float(),W_deq)
+	if h.lqer_enabled and quant_errors:
+		sorted_errs=sorted(quant_errors.items(),key=lambda x:-x[1][0]);top_k=min(h.lqer_top_k,len(sorted_errs))
+		log(f"LQER:correcting top-{top_k} tensors (rank={h.lqer_rank}, bits={h.lqer_factor_bits}, group={h.lqer_group_size})")
+		for i in range(top_k):
+			name,(_,W_orig,W_deq)=sorted_errs[i]
+			ldata=lqer_correct_tensor(W_orig,W_deq,rank=h.lqer_rank,factor_bits=h.lqer_factor_bits,group_size=h.lqer_group_size)
+			for k2,v2 in ldata.items():result[name+'.lqer.'+k2]=v2
+			meta[name]+=f"+lqer(r{h.lqer_rank})"
+			recon=lqer_reconstruct(ldata,h.lqer_group_size);new_err=float((W_orig-W_deq-recon).norm());log(f"  {name}: err {_:.4f} -> {new_err:.4f}")
 	categories=collections.defaultdict(set)
 	for(name,cat)in meta.items():short=re.sub('\\.\\d+$','',re.sub('blocks\\.\\d+','blocks',name));categories[cat].add(short)
 	log('Quantized weights:')
 	for cat in sorted(categories):log("  %s: %s" % (cat, ", ".join(sorted(categories[cat]))))
 	return result,meta
-def dequantize_mixed(result,meta,template_sd):
+def dequantize_mixed(result,meta,template_sd,lqer_group_size=64):
 	out={}
 	for(name,orig)in template_sd.items():
 		info=meta.get(name)
@@ -299,9 +320,44 @@ def dequantize_mixed(result,meta,template_sd):
 			if t.dtype==torch.float16 and orig_dtype in(torch.float32,torch.bfloat16):t=t.to(orig_dtype)
 			out[name]=t;continue
 		q,s=result[name+'.q'],result[name+'.scale']
-		if s.ndim>0:out[name]=(q.float()*s.float().view(q.shape[0],*[1]*(q.ndim-1))).to(orig_dtype)
-		else:out[name]=(q.float()*float(s.item())).to(orig_dtype)
+		if s.ndim>0:W=(q.float()*s.float().view(q.shape[0],*[1]*(q.ndim-1)))
+		else:W=(q.float()*float(s.item()))
+		if name+'.lqer.Aq'in result:
+			lqer_prefix=name+'.lqer.';ldata={k[len(lqer_prefix):]:result[k]for k in result if k.startswith(lqer_prefix)}
+			W=W+lqer_reconstruct(ldata,lqer_group_size)
+		out[name]=W.to(orig_dtype)
 	return out
+def lqer_quantize_factor(W,bits=4,group_size=64):
+	"""Quantize a matrix to int4 with per-group asymmetric scales and zeros."""
+	rows,cols=W.shape;clip_range=2**bits-1;W_f=W.float()
+	n_groups=(cols+group_size-1)//group_size;Q=torch.zeros_like(W_f,dtype=torch.int8);scales=torch.zeros(rows,n_groups,dtype=torch.float16);zeros=torch.zeros(rows,n_groups,dtype=torch.float16)
+	for gi in range(n_groups):
+		c0=gi*group_size;c1=min(c0+group_size,cols);block=W_f[:,c0:c1]
+		wmin=block.min(dim=1,keepdim=True).values;wmax=block.max(dim=1,keepdim=True).values
+		s=((wmax-wmin)/clip_range).clamp_min(1e-10);z=wmin
+		scales[:,gi]=s.squeeze(1).to(torch.float16);zeros[:,gi]=z.squeeze(1).to(torch.float16)
+		Q[:,c0:c1]=torch.clamp(torch.round((block-z)/s),0,clip_range).to(torch.int8)
+	return Q,scales,zeros
+def lqer_dequantize_factor(Q,scales,zeros,group_size=64):
+	"""Dequantize int4 factor back to float."""
+	rows,cols=Q.shape;W=torch.zeros(rows,cols,dtype=torch.float32)
+	n_groups=scales.shape[1]
+	for gi in range(n_groups):
+		c0=gi*group_size;c1=min(c0+group_size,cols)
+		W[:,c0:c1]=Q[:,c0:c1].float()*scales[:,gi:gi+1].float()+zeros[:,gi:gi+1].float()
+	return W
+def lqer_correct_tensor(W_orig,W_quant,rank=4,factor_bits=4,group_size=64):
+	"""Compute low-rank correction for quantization error and quantize the factors."""
+	E=(W_orig.float()-W_quant.float());U,S,Vh=torch.linalg.svd(E,full_matrices=False)
+	A=U[:,:rank]*S[:rank].sqrt().unsqueeze(0);B=(S[:rank].sqrt().unsqueeze(1)*Vh[:rank,:])
+	Aq,As,Az=lqer_quantize_factor(A,bits=factor_bits,group_size=group_size)
+	Bq,Bs,Bz=lqer_quantize_factor(B,bits=factor_bits,group_size=group_size)
+	return{'Aq':Aq,'As':As,'Az':Az,'Bq':Bq,'Bs':Bs,'Bz':Bz}
+def lqer_reconstruct(lqer_data,group_size=64):
+	"""Reconstruct the low-rank correction from quantized factors."""
+	A=lqer_dequantize_factor(lqer_data['Aq'],lqer_data['As'],lqer_data['Az'],group_size)
+	B=lqer_dequantize_factor(lqer_data['Bq'],lqer_data['Bs'],lqer_data['Bz'],group_size)
+	return A@B
 _BSHF_MAGIC=b'BSHF'
 def _byte_shuffle(data,stride=2):
 	if stride<=1 or len(data)<stride:return data
@@ -315,14 +371,44 @@ def _byte_unshuffle(data):
 	payload=np.frombuffer(data,dtype=np.uint8,offset=5);n=len(payload);out=np.empty(n,dtype=np.uint8);src_off=0
 	for pos in range(stride):chunk_len=n//stride+(1 if pos<n%stride else 0);out[pos::stride][:chunk_len]=payload[src_off:src_off+chunk_len];src_off+=chunk_len
 	return out.tobytes()
+def _compress_pergroup(data):
+	"""Per-group compression: split quantized blob into chunks, compress each with best of lzma/brotli."""
+	import brotli
+	chunk_size=64*1024  # 64KB chunks
+	chunks=[];offset=0
+	while offset<len(data):
+		chunk=data[offset:offset+chunk_size]
+		c_lzma=lzma.compress(chunk,preset=9|lzma.PRESET_EXTREME)
+		c_brotli=brotli.compress(chunk,quality=11)
+		# Pick smaller
+		if len(c_lzma)<=len(c_brotli):
+			chunks.append(b'\x00'+len(c_lzma).to_bytes(4,'little')+c_lzma)
+		else:
+			chunks.append(b'\x01'+len(c_brotli).to_bytes(4,'little')+c_brotli)
+		offset+=chunk_size
+	header=len(data).to_bytes(8,'little')+len(chunks).to_bytes(4,'little')
+	return header+b''.join(chunks)
+def _decompress_pergroup(data):
+	import brotli
+	orig_len=int.from_bytes(data[:8],'little');n_chunks=int.from_bytes(data[8:12],'little')
+	offset=12;result=bytearray()
+	for _ in range(n_chunks):
+		method=data[offset];offset+=1
+		chunk_len=int.from_bytes(data[offset:offset+4],'little');offset+=4
+		chunk=data[offset:offset+chunk_len];offset+=chunk_len
+		if method==0:result.extend(lzma.decompress(chunk))
+		else:result.extend(brotli.decompress(chunk))
+	return bytes(result[:orig_len])
 def _compress(data,compressor):
 	data=_byte_shuffle(data)
 	if compressor=='lzma':return lzma.compress(data,preset=6)
 	elif compressor=='brotli':import brotli;return brotli.compress(data,quality=11)
+	elif compressor=='pergroup':return _compress_pergroup(data)
 	raise ValueError(f"Unknown compressor: {compressor!r}")
 def _decompress(data,compressor):
 	if compressor=='lzma':raw=lzma.decompress(data)
 	elif compressor=='brotli':import brotli;raw=brotli.decompress(data)
+	elif compressor=='pergroup':raw=_decompress_pergroup(data);return raw
 	else:raise ValueError(f"Unknown compressor: {compressor!r}")
 	raw=_byte_unshuffle(raw);return raw
 def serialize(h,base_model,code):
@@ -336,7 +422,7 @@ def serialize(h,base_model,code):
 def deserialize(h,device):
 	eval_model=GPT(h).to(device).bfloat16();restore_fp32_params(eval_model);sd_cpu={k:v.detach().cpu()for(k,v)in eval_model.state_dict().items()}
 	with open(h.quantized_model_path,'rb')as f:quant_blob_disk=f.read()
-	quant_state=torch.load(io.BytesIO(_decompress(quant_blob_disk,h.compressor)),map_location='cpu');deq_state=dequantize_mixed(quant_state['w'],quant_state['m'],sd_cpu);eval_model.load_state_dict(deq_state,strict=True);return eval_model
+	quant_state=torch.load(io.BytesIO(_decompress(quant_blob_disk,h.compressor)),map_location='cpu',weights_only=False);deq_state=dequantize_mixed(quant_state['w'],quant_state['m'],sd_cpu,lqer_group_size=h.lqer_group_size);eval_model.load_state_dict(deq_state,strict=True);return eval_model
 def _loss_bpb(loss_sum,token_count,byte_count):val_loss=(loss_sum/token_count).item();val_bpb=val_loss/math.log(2.)*(token_count.item()/byte_count.item());return val_loss,val_bpb
 def eval_val(h,device,val_data,model):
 	seq_len=h.eval_seq_len;local_batch_tokens=h.val_batch_tokens//(h.world_size*h.grad_accum_steps)
@@ -398,12 +484,91 @@ def eval_val_ttt(h,device,val_data,base_model,batch_seqs=32):
 	if dist.is_available()and dist.is_initialized():dist.all_reduce(loss_sum,op=dist.ReduceOp.SUM);dist.all_reduce(token_count,op=dist.ReduceOp.SUM);dist.all_reduce(byte_count,op=dist.ReduceOp.SUM)
 	for p in base_model.parameters():p.requires_grad_(True)
 	base_model.eval();return _loss_bpb(loss_sum,token_count,byte_count)
+# --- LoRA TTT (PR #1626) ---
+class BatchedLinearLoRA(nn.Module):
+	def __init__(self,bsz,in_features,out_features,rank):
+		super().__init__();self.in_features=in_features;self.A=nn.Parameter(torch.empty(bsz,rank,in_features));self.B=nn.Parameter(torch.zeros(bsz,out_features,rank));self.reset()
+	def forward(self,x):return(x@self.A.transpose(1,2))@self.B.transpose(1,2)
+	def reset(self):
+		bound=1./math.sqrt(self.in_features)
+		with torch.no_grad():self.A.uniform_(-bound,bound);self.B.zero_()
+class BatchedTTTLoRA(nn.Module):
+	def __init__(self,bsz,model,rank):
+		super().__init__();dim=model.tok_emb.embedding_dim;vocab=model.tok_emb.num_embeddings
+		self.lm_head_lora=BatchedLinearLoRA(bsz,dim,vocab,rank);self.q_loras=nn.ModuleList();self.v_loras=nn.ModuleList()
+		for block in model.blocks:self.q_loras.append(BatchedLinearLoRA(bsz,dim,block.attn.c_q.weight.shape[0],rank));self.v_loras.append(BatchedLinearLoRA(bsz,dim,block.attn.c_v.weight.shape[0],rank))
+	def reset(self):
+		for m in self.modules():
+			if isinstance(m,BatchedLinearLoRA):m.reset()
+def _reset_ttt_optimizer(opt):
+	for group in opt.param_groups:
+		for p in group['params']:
+			s=opt.state.get(p)
+			if not s:continue
+			s['exp_avg'].zero_();s['exp_avg_sq'].zero_();s['step'].fill_(0)
+def _build_ttt_lora_optimizer(lora,h):return torch.optim.Adam(lora.parameters(),lr=h.ttt_lora_lr,betas=(h.beta1,h.beta2),eps=1e-10)
+def _find_docs(all_tokens):
+	bos_positions=(all_tokens==1).nonzero(as_tuple=True)[0].numpy();docs=[]
+	for i in range(len(bos_positions)):
+		start=int(bos_positions[i]);end=int(bos_positions[i+1])if i+1<len(bos_positions)else all_tokens.numel()
+		if i+1<len(bos_positions):end+=1
+		if end-start>=2:docs.append((start,end-start))
+	return docs
+def _compute_chunk_window(ci,pred_len,num_chunks,chunk_size,eval_seq_len):
+	chunk_start=ci*chunk_size;chunk_end=pred_len if ci==num_chunks-1 else(ci+1)*chunk_size;win_start=max(0,chunk_end-eval_seq_len);win_len=chunk_end-win_start;chunk_offset=chunk_start-win_start;chunk_len=chunk_end-chunk_start
+	return win_start,win_len,chunk_offset,chunk_len
+def _accumulate_bpb_lora(ptl,x,y,batch_i,chunk_offset,chunk_len,base_bytes_lut,has_leading_space_lut,is_boundary_token_lut,loss_sum,byte_sum,token_count):
+	lbl=ptl[batch_i,chunk_offset:chunk_offset+chunk_len].to(torch.float64);prev=x[batch_i,chunk_offset:chunk_offset+chunk_len];tgt=y[batch_i,chunk_offset:chunk_offset+chunk_len]
+	tok_bytes=base_bytes_lut[tgt].to(torch.float64);tok_bytes+=(has_leading_space_lut[tgt]&~is_boundary_token_lut[prev]).to(torch.float64)
+	loss_sum+=lbl.sum();byte_sum+=tok_bytes.sum();token_count+=chunk_len
+def eval_val_ttt_lora(h,device,val_data,base_model):
+	rank=h.rank;world_size=h.world_size;chunk_size=h.ttt_lora_chunk_size;eval_seq_len=h.ttt_lora_eval_seq_len;batch_size=h.ttt_lora_batch_size;lora_rank=h.ttt_lora_rank
+	all_tokens=val_data.val_tokens;docs=_find_docs(all_tokens);rank_docs=docs[(len(docs)*rank)//world_size:(len(docs)*(rank+1))//world_size]
+	rank_docs.sort(key=lambda d:(d[1]-2)//chunk_size)
+	log(f"ttt_lora:start docs={len(rank_docs)} batch_size={batch_size} lora_rank={lora_rank} lr={h.ttt_lora_lr}")
+	base_model.eval()
+	for p in base_model.parameters():p.requires_grad_(False)
+	lora=BatchedTTTLoRA(batch_size,base_model,lora_rank).to(device);opt=_build_ttt_lora_optimizer(lora,h)
+	loss_sum=torch.zeros((),device=device,dtype=torch.float64);byte_sum=torch.zeros((),device=device,dtype=torch.float64);token_count=torch.zeros((),device=device,dtype=torch.float64)
+	for bi in range(0,len(rank_docs),batch_size):
+		batch=rank_docs[bi:bi+batch_size];bsz=len(batch)
+		if bsz==batch_size:cur_lora,cur_opt=lora,opt;cur_lora.reset();_reset_ttt_optimizer(cur_opt)
+		else:cur_lora=BatchedTTTLoRA(bsz,base_model,lora_rank).to(device);cur_opt=_build_ttt_lora_optimizer(cur_lora,h)
+		pred_lens=[doc_len-1 for _,doc_len in batch];num_chunks=[(pl+chunk_size-1)//chunk_size for pl in pred_lens];max_nc=max(num_chunks)
+		for ci in range(max_nc):
+			active=[ci<nc for nc in num_chunks];needs_train=any(ci<nc-1 for nc in num_chunks)
+			max_wlen=min((ci+1)*chunk_size,max(pred_lens));context_size=min(max_wlen,eval_seq_len)
+			x=torch.zeros(bsz,context_size,dtype=torch.int64,device=device);y=torch.zeros(bsz,context_size,dtype=torch.int64,device=device);doc_info=[]
+			for b in range(bsz):
+				if not active[b]:doc_info.append((0,0));continue
+				ds,dl=batch[b];ws,wl,co,cl=_compute_chunk_window(ci,pred_lens[b],num_chunks[b],chunk_size,eval_seq_len)
+				chunk=all_tokens[ds+ws:ds+ws+wl+1].to(dtype=torch.int64,device=device);x[b,:wl]=chunk[:-1];y[b,:wl]=chunk[1:];doc_info.append((co,cl))
+			if needs_train:
+				with torch.autocast(device_type='cuda',dtype=torch.bfloat16):logits=base_model.forward_logits(x,lora=cur_lora)
+				ptl=F.cross_entropy(logits.reshape(-1,logits.size(-1)).float(),y.reshape(-1),reduction='none').reshape(bsz,context_size)
+			else:
+				with torch.no_grad(),torch.autocast(device_type='cuda',dtype=torch.bfloat16):logits=base_model.forward_logits(x,lora=cur_lora)
+				ptl=F.cross_entropy(logits.reshape(-1,logits.size(-1)).float(),y.reshape(-1),reduction='none').reshape(bsz,context_size)
+			with torch.no_grad():
+				for b in range(bsz):
+					if not active[b]:continue
+					co,cl=doc_info[b];_accumulate_bpb_lora(ptl,x,y,b,co,cl,val_data.base_bytes_lut,val_data.has_leading_space_lut,val_data.is_boundary_token_lut,loss_sum,byte_sum,token_count)
+			if needs_train:
+				mask=torch.tensor([float(ci<num_chunks[b]-1)for b in range(bsz)],device=device)
+				per_doc=ptl[:,ci*chunk_size:min((ci+1)*chunk_size,context_size)].mean(dim=-1) if ci*chunk_size<context_size else ptl.mean(dim=-1)
+				cur_opt.zero_grad();(per_doc*mask).sum().backward();cur_opt.step()
+	if dist.is_available()and dist.is_initialized():dist.all_reduce(loss_sum,op=dist.ReduceOp.SUM);dist.all_reduce(byte_sum,op=dist.ReduceOp.SUM);dist.all_reduce(token_count,op=dist.ReduceOp.SUM)
+	for p in base_model.parameters():p.requires_grad_(True)
+	val_loss=float(loss_sum.item()/token_count.item());val_bpb=float((loss_sum.item()/math.log(2.))/byte_sum.item())
+	log(f"ttt_lora:done val_loss={val_loss:.8f} val_bpb={val_bpb:.8f} tokens={int(token_count.item())}");return val_loss,val_bpb
 def timed_eval(label,fn,*args,**kwargs):torch.cuda.synchronize();t0=time.perf_counter();val_loss,val_bpb=fn(*args,**kwargs);torch.cuda.synchronize();elapsed_ms=1e3*(time.perf_counter()-t0);log(f"{label} val_loss:{val_loss:.8f} val_bpb:{val_bpb:.8f} eval_time:{elapsed_ms:.0f}ms");return val_loss,val_bpb
 def train_model(h,device,val_data):
 	base_model=GPT(h).to(device).bfloat16();restore_fp32_params(base_model);compiled_model=torch.compile(base_model,dynamic=False,fullgraph=True)
 	if h.distributed:model=DDP(compiled_model,device_ids=[h.local_rank],broadcast_buffers=False)
 	else:model=compiled_model
-	log(f"model_params:{sum(p.numel()for p in base_model.parameters())}");optimizers=Optimizers(h,base_model);train_loader=ShuffledSequenceLoader(h,device);max_wallclock_ms=1e3*h.max_wallclock_seconds if h.max_wallclock_seconds>0 else None
+	log(f"model_params:{sum(p.numel()for p in base_model.parameters())}")
+	if h.grad_accum_steps!=8//h.world_size:log(f"grad_accum:overridden steps={h.grad_accum_steps}")
+	optimizers=Optimizers(h,base_model);train_loader=ShuffledSequenceLoader(h,device);max_wallclock_ms=1e3*h.max_wallclock_seconds if h.max_wallclock_seconds>0 else None
 	if max_wallclock_ms is not None:max_wallclock_ms-=h.gptq_reserve_seconds*1e3;log(f"gptq:reserving {h.gptq_reserve_seconds:.0f}s, effective={max_wallclock_ms:.0f}ms")
 	def training_frac(step,elapsed_ms):
 		if max_wallclock_ms is None:return step/max(h.iterations,1)
@@ -460,7 +625,8 @@ def train_model(h,device,val_data):
 		if stop_after_step is None and reached_cap:stop_after_step=step
 	log(f"peak memory allocated: {torch.cuda.max_memory_allocated()//1024//1024} MiB reserved: {torch.cuda.max_memory_reserved()//1024//1024} MiB");log('ema:applying EMA weights');current_state=base_model.state_dict();avg_state={name:t.to(dtype=current_state[name].dtype)for(name,t)in ema_state.items()};base_model.load_state_dict(avg_state,strict=True);return base_model,compiled_model
 def train_and_eval(h,device):
-	random.seed(h.seed);np.random.seed(h.seed);torch.manual_seed(h.seed);torch.cuda.manual_seed_all(h.seed);val_data=ValidationData(h,device);_n_shards=len(list(Path(h.datasets_dir).resolve().glob('fineweb_train_*.bin')));log(f"train_shards: {_n_shards}");log(f"val_tokens: {val_data.val_tokens.numel()-1}");base_model,compiled_model=train_model(h,device,val_data);torch._dynamo.reset();timed_eval('pre-quantization post-ema',eval_val,h,device,val_data,compiled_model);serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
+	random.seed(h.seed);np.random.seed(h.seed);torch.manual_seed(h.seed);torch.cuda.manual_seed_all(h.seed);val_data=ValidationData(h,device);_n_shards=len(list(Path(h.datasets_dir).resolve().glob('fineweb_train_*.bin')));log(f"train_shards: {_n_shards}");log(f"val_tokens: {val_data.val_tokens.numel()-1}");base_model,compiled_model=train_model(h,device,val_data);torch._dynamo.reset();timed_eval('pre-quantization post-ema',eval_val,h,device,val_data,compiled_model)
+	serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
 	if h.distributed:dist.barrier()
 	eval_model=deserialize(h,device)
 	if h.num_loops>0:eval_model.looping_active=True
@@ -470,6 +636,12 @@ def train_and_eval(h,device):
 		del eval_model,compiled_model;torch._dynamo.reset();torch.cuda.empty_cache();ttt_model=deserialize(h,device)
 		if h.num_loops>0:ttt_model.looping_active=True
 		timed_eval('quantized_ttt',eval_val_ttt,h,device,val_data,ttt_model);del ttt_model
+	if h.ttt_lora_enabled and h.sliding_window_enabled:
+		if'eval_model'in dir():del eval_model
+		if'compiled_model'in dir():del compiled_model
+		torch._dynamo.reset();torch.cuda.empty_cache();lora_model=deserialize(h,device)
+		if h.num_loops>0:lora_model.looping_active=True
+		timed_eval('quantized_ttt_lora',eval_val_ttt_lora,h,device,val_data,lora_model);del lora_model
 	if h.etlb_enabled and h.sliding_window_enabled:
 		if'eval_model'not in dir():
 			eval_model=deserialize(h,device)

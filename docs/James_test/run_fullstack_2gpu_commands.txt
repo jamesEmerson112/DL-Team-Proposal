@@ -1,0 +1,75 @@
+# -----------------------------------------------------------------------
+# Full Stack: Small Batch + EMA=0.990 + PreQuantTTT — 2×H100 RunPod
+#
+# Combines the 3 best orthogonal techniques:
+#   B2: Small Batch (ga=1, batch÷4) — -0.015 BPB (training phase)
+#   R3: EMA=0.990 — -0.0117 BPB (post-training phase)
+#   R4: PreQuantTTT 21ep — -0.1435 BPB (pre-GPTQ phase)
+#
+# Projected (additive): ~1.02 TTT BPB on 2×H100
+# Estimated time: ~15 min (10 min train + 5 min eval/GPTQ/TTT)
+# -----------------------------------------------------------------------
+
+# === 1. Setup ===
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment
+
+# === 2. Install deps ===
+cd parameter-golf
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli
+pip install --upgrade torch
+python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Install Flash Attention 3 (required for V2, H100 only)
+# NOTE: Do NOT use "pip install flash-attn" — that installs FA2, wrong package.
+pip install --no-cache-dir \
+  "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# === 3. Download SP8192 dataset (skip if already done) ===
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+cd ..
+
+# === 4. Preflight — verify full stack config ===
+python3 -c "
+import sys
+sys.path.insert(0, 'parameter-golf')
+with open('parameter-golf/train_gpt_v2.py') as f:
+    code = f.read()
+checks = {
+    'GRAD_ACCUM_STEPS env var': 'GRAD_ACCUM_STEPS' in code,
+    'PREQUANT_TTT_ENABLED': 'PREQUANT_TTT_ENABLED' in code,
+    'prequant_ttt function': 'prequant_ttt' in code,
+    'weights_only=False fix': 'weights_only=False' in code,
+    'EMA_DECAY env var': 'EMA_DECAY' in code,
+}
+all_ok = all(checks.values())
+for name, ok in checks.items():
+    print(f'  {\"✓\" if ok else \"✗\"} {name}')
+print(f'\nPreflight: {\"PASS\" if all_ok else \"FAIL\"} ({sum(checks.values())}/{len(checks)} checks)')
+if not all_ok:
+    print('ERROR: Missing code. Did you pull the latest James-experiment branch?')
+    sys.exit(1)
+"
+
+# === 5. Full Stack Run (~15 min) ===
+#
+# Small Batch: GRAD_ACCUM_STEPS=1, TRAIN_BATCH_TOKENS=196608 (÷4)
+# EMA: decay=0.990 (vs default 0.9965)
+# PreQuantTTT: 21 epochs AdamW on val before GPTQ
+#
+# Expected: ~3,349 steps (4× more than C6's ~1,030)
+#
+# PASS/FAIL:
+#   TTT BPB < 1.00  → HOME RUN. Run 8×H100 3-seed.
+#   TTT BPB 1.00-1.03 → GOOD. Run 8×H100 3-seed.
+#   TTT BPB 1.03-1.05 → OK. Try EMA sweep with small batch.
+#   TTT BPB > 1.05  → BAD. Test without Small Batch.
+#
+bash runs/run_v2_fullstack_2gpu.sh
