@@ -1,0 +1,223 @@
+P1a vs P3 Comparison — Post-Retraction Analysis
+=================================================
+Summary: P1c achieved 0.9978 BPB (sub-1.0!) but has THREE bugs: gate OFF, CaseOps byte
+inflation, and CaseOps training data via symlinks. Corrected BPB ≈ 1.087 (worse than C6).
+P1a (1.0769) is best BPB without bugs. C6 (1.0805) remains best legal submittable run.
+
+Run Descriptions:
+  C6:     PR #1851 base + headwise gate + emb7+eclip15. Default batch/EMA/schedule.
+  P1a:    C6 + 6 SOTA hparam overrides (warmdown, min_lr, beta2, clip sigmas, gptq_reserve).
+          Same default batch size. Zero code changes vs C6, env vars only. OVER BUDGET.
+  P1c:    P1a but MATRIX_CLIP_SIGMAS tightened (12.0 vs 11.5) to fit under 16 MB.
+          Hypothesis: tighter clip costs ~0.001 BPB but saves ~0.4 MB.
+  P3-fix: PR #1851 base + headwise gate + EMA=0.990 + small batch (196K) + emb6.
+          CaseOps data + CASEOPS_ENABLED=1 (sidecar byte counting).
+          4× smaller batch → ~3× more steps, but noisier gradients.
+
+
+● Key findings from the log analysis:
+
+  The byte ratio is WRONG again. Computing BPB × ln(2) / val_loss:
+  - P4: 1.00741 × 0.6931 / 2.8511 = **0.2449**
+  - C6 (standard): 0.2683
+
+  That's ~9.6% inflation — the same CaseOps-like deflation we saw in P3/P1c. Despite removing the symlink on the data directory, the tokenizer might still be
+   CaseOps, or PR #1851's code computes bytes differently.
+
+  The val_loss tells the real story:
+  - P4 val_loss: 2.8535 (worse)
+  - C6 val_loss: ~2.8092 (better)
+
+  Normalized to C6's byte ratio: P4 true BPB ≈ 1.104 — worse than C6 (1.0805) by +0.024.
+
+  Why worse? P4 only got 2,542 steps vs C6's ~4,467. The layer loop activation at step 1442 cut throughput by ~45% (8.2M → 3.8M tok/s), so P4 saw far fewer
+  tokens in the same 10-minute window.
+
+  Action items:
+  1. Check if the tokenizer is still CaseOps: ls -la data/ — look for fineweb_8192_bpe.model symlink
+  2. Install python-minifier and rerun — but the result will likely be worse than C6
+  3. The deeper issue: SOTA hparams (WARMDOWN=0.85, MIN_LR=0.10) may need more steps to pay off, and the throughput loss from layer loop prevents that
+
+────────────────────────────────────────────────────────────────────────────────
+1. Side-by-Side Config
+────────────────────────────────────────────────────────────────────────────────
+
+| Parameter             | C6 (reference)   | P1a               | P1c (running)          | P3 (corrected)         |
+|-----------------------|------------------|--------------------|------------------------|------------------------|
+| Base stack            | @bigbag PR #1851 | @bigbag PR #1851   | @bigbag PR #1851       | @bigbag PR #1851       |
+| GATED_ATTN            | headwise         | headwise           | headwise               | headwise               |
+| EMA_DECAY             | 0.9965 (default) | 0.9965 (default)   | 0.9965 (default)       | 0.990                  |
+| TRAIN_BATCH_TOKENS    | 786432 (default) | 786432 (default)   | 786432 (default)       | 196608 (small batch)   |
+| WARMDOWN_FRAC         | 0.72             | 0.85 ★             | 0.85 ★                 | 0.75 (PR #1851 default)|
+| MIN_LR                | 0.0              | 0.10 ★             | 0.10 ★                 | 0.0                    |
+| MATRIX_CLIP_SIGMAS    | 12.85            | 11.5 ★             | **12.0** ★★            | 12.85                  |
+| EMBED_CLIP_SIGMAS     | 15.0             | 14.0 ★             | 14.0 ★                 | 15.0                   |
+| BETA2                 | 0.95             | 0.99 ★             | 0.99 ★                 | 0.95                   |
+| GPTQ_RESERVE_SECONDS  | 12               | 0.5 ★              | 0.5 ★                  | 4                      |
+| EMBED_BITS            | 7                | 7                  | 7                      | 6                      |
+| CASEOPS_ENABLED       | N/A              | N/A                | N/A                    | 1 (corrected)          |
+| MUON_MOMENTUM         | 0.99             | 0.99               | 0.99                   | 0.97 (PR #1851 default)|
+| QK_GAIN_INIT          | 5.25             | 5.25               | 5.25                   | 5.0                    |
+| Steps (8×H100)        | ~4,467           | 4,587              | 3,056                  | ~12,140                |
+| Budget?               | Yes (15.70 MB)   | NO (16.35 MB)      | NO (16.69 MB)          | Yes (15.98 MB)         |
+
+★ = SOTA hparam override from PR #1855 (codemath3000)
+
+Key difference: P1a = optimizer/schedule tuning (6 env overrides from SOTA).
+               P3 = training dynamics changes (EMA + small batch + emb6).
+
+────────────────────────────────────────────────────────────────────────────────
+2. Results Comparison
+────────────────────────────────────────────────────────────────────────────────
+
+| Run     | TTT BPB | val_loss | Steps  | Size      | Budget? | Status     |
+|---------|---------|----------|--------|-----------|---------|------------|
+| **P1c** | **0.9978**| 2.3912  | 3,056  | 16.69 MB  | NO      | GATE+BYTE BUG |
+| P1a     | 1.0769  | 2.7816   | 4,587  | 16.35 MB  | NO      | Best BPB   |
+| P3-fix  | 1.0975* | 2.4012   | 12,140 | 15.98 MB  | Yes     | CORRECTED  |
+| C6      | 1.0805  | 2.7910   | 4,467  | 15.70 MB  | Yes     | SUBMITTED  |
+| ext SOTA| 1.0611  | —        | ~4,930 | ~15.90 MB | Yes     | PR #1855   |
+
+*P3-fix = 2-seed mean (seed42: 1.09724, seed1337: 1.09779)
+
+Delta from C6:  P1a = −0.0036 (better)    P3-fix = +0.0170 (worse)
+                P1c = +0.0065 (corrected — 3 bugs: gate OFF + byte inflation + CaseOps data)
+
+────────────────────────────────────────────────────────────────────────────────
+2a. P1c Bugs Found
+────────────────────────────────────────────────────────────────────────────────
+
+Bug 1: GATED_ATTN env var mismatch — gate was OFF
+  - p4_clip12.env had `GATED_ATTN=headwise` (V2 train_gpt_v2.py style)
+  - PR #1851 train_gpt.py reads `GATED_ATTN_ENABLED` (boolean, 0/1)
+  - Result: gated_attn_enabled: False in logs. Gate was completely OFF.
+  - The 0.9978 BPB was achieved WITHOUT gated attention.
+  - Fix: add `export GATED_ATTN_ENABLED=1` to config.
+
+Bug 2: CaseOps byte accounting — inflated byte denominator by ~9%
+  - Pod had CaseOps symlinks: fineweb10B_sp8192 → fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
+  - CASEOPS_ENABLED was not set → code used LUT byte counting on CaseOps tokenizer
+  - LUT includes case marker bytes not present in raw text → inflated denominator
+  - Token/byte ratio proof:
+      C6 (standard):    BPB×ln2/val_loss = 1.08753×0.6931/2.80919 = 0.2683
+      P1c (bugged LUT): BPB×ln2/val_loss = 1.00290×0.6931/2.39123 = 0.2907  ← neither standard nor correct
+      P3 (sidecar):     BPB×ln2/val_loss = 1.09260×0.6931/2.39117 = 0.3167  ← correct CaseOps
+  - P1c ratio (0.2907) falls between standard and correct — exactly where LUT inflation lands
+  - Correction factor: 0.3167 / 0.2907 = 1.0894 (~8.9% inflation, matches P3's ~9%)
+  - Corrected P1c BPB: Pre-Q 1.093 | Quant 1.100 | TTT **1.087** (worse than C6 by +0.0065)
+
+Bug 3: CaseOps training data — model trained on wrong data
+  - Pod symlinks pointed standard SP8192 paths to CaseOps-tokenized data
+  - Model was trained on CaseOps tokens, NOT standard SP8192
+  - val_loss (2.3912) reflects CaseOps data quality, not standard data
+  - Even with correct byte counting, results are not comparable to C6/P1a (different data)
+  - A clean re-run needs: fresh pod with standard data download (no symlinks)
+
+Bug 4: Still over budget (16.69 MB) even without gate
+  - MATRIX_CLIP_SIGMAS=12.0 not tight enough.
+  - With gate ON, model will have MORE parameters → even larger file.
+  - Fix: tighten MATRIX_CLIP_SIGMAS to 12.5 for re-run.
+
+Additional observations:
+  - model_params: 35,944,602 (without gate — gate adds ~headwise dim params)
+  - Pre-Q BPB: 1.0029 | Quant BPB: 1.0097 | TTT BPB: 0.9978 (ALL INFLATED — see Bug 2)
+  - Eval time: 443.6s | Seed: 1337
+  - The sub-1.0 BPB was an artifact. Corrected TTT BPB ≈ 1.087.
+
+────────────────────────────────────────────────────────────────────────────────
+3. P3 Byte Accounting Error (Root Cause)
+────────────────────────────────────────────────────────────────────────────────
+
+Causal chain:
+  1. Pod setup created symlinks: standard paths → CaseOps data + tokenizer
+       ln -s fineweb10B_sp8192_lossless_caps_caseops_v1_reserved → fineweb10B_sp8192
+       ln -s fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model → fineweb_8192_bpe.model
+  2. Config set CASEOPS_ENABLED=0 (assumed irrelevant since data was already tokenized)
+  3. Code has two byte-counting paths:
+       CASEOPS_ENABLED=1 → loads sidecar file (fineweb_val_bytes_*.bin) = correct raw bytes
+       CASEOPS_ENABLED=0 → calls build_sentencepiece_luts() = bytes from tokenizer vocab
+  4. LUT path computed len(piece.encode("utf-8")) on CaseOps tokenizer pieces.
+     CaseOps pieces include case marker characters (not present in raw text).
+  5. Result: byte denominator ~164.6M (inflated) vs ~151M (canonical) = +8.3%
+     BPB formula: loss/ln2 × tokens/bytes → smaller denominator = higher BPB
+     Reported 1.0066 → actual 1.0975 (2-seed mean with correct sidecar counting)
+
+Fix: CASEOPS_ENABLED=1 + explicit data/tokenizer paths (no symlinks) + sidecar file.
+The val_loss (~2.40) was always genuine — only the BPB denominator was wrong.
+
+────────────────────────────────────────────────────────────────────────────────
+4. Key Takeaways
+────────────────────────────────────────────────────────────────────────────────
+
+1. BEST LEGAL RUN: C6 at 1.0805 BPB (3-seed mean, under budget, submitted PR #2005).
+   P1a beats it by −0.0036 but is 0.35 MB over budget.
+
+2. P3's techniques FAILED at 8×H100 scale (2-seed confirmed):
+   - EMA=0.990: proved on 2×H100 (−0.012) but HURT on 8×H100 (+0.0025 in L1).
+     Even with 12,140 steps (small batch), aggressive EMA doesn't help.
+   - Small batch: more steps (12,140 vs 4,467) but smaller batches degrade quality
+     more than extra updates help. L2 confirmed: +0.0121 vs C6.
+   - Combined (P3-fix): +0.0170 vs C6 (2-seed mean). Techniques compound negatively.
+
+3. P1a proves SOTA hparams transfer cleanly: zero code changes, just 6 env var
+   overrides from PR #1855. WARMDOWN=0.85 + MIN_LR=0.10 + BETA2=0.99 are the
+   likely drivers (extended training via warmdown + non-zero floor LR).
+
+4. P1a budget problem is MATRIX_CLIP_SIGMAS=11.5 (looser than C6's 12.85).
+   Allows larger weight magnitudes → compresses worse under brotli.
+   Fix: tighten to 12.0-12.5 to fit under 16 MB while retaining most gain.
+
+5. 2×H100 findings don't transfer to 8×H100:
+   - EMA=0.990: −0.012 on 2×H100 → +0.003 on 8×H100
+   - Small batch: −0.015 on 2×H100 → +0.012 on 8×H100
+   Root cause: 8 GPUs already give sufficient batch diversity; reducing batch
+   per-GPU just hurts signal-to-noise without the step-count payoff.
+
+6. val_loss vs BPB disconnect: P3-fix has LOWER val_loss (2.4012 vs 2.7816)
+   but HIGHER BPB (1.0972 vs 1.0769). This is because BPB = loss/ln2 × tokens/bytes,
+   and the token/byte ratio differs between CaseOps and standard tokenization.
+
+7. Path forward for beating C6 legally:
+   - P1c re-run on CLEAN pod (no CaseOps symlinks) with:
+     GATED_ATTN_ENABLED=1 + MATRIX_CLIP_SIGMAS=12.5 + standard SP8192 data
+   - P1c's corrected BPB (1.087) is WORSE than C6 (1.0805) — sub-1.0 was an artifact
+   - SOTA hparams still likely help (P1a = 1.0769 pre-bug), but gains are modest
+   - Or: cherry-pick individual SOTA hparams (WARMDOWN, MIN_LR) that don't
+     affect compression, skip MATRIX_CLIP_SIGMAS change entirely
+
+9. P1c has THREE bugs (gate OFF + byte inflation + wrong training data).
+   Only bug #1 (gate) was caught initially. Bugs #2-3 from pod CaseOps symlinks
+   are the same root cause as P3's retraction. Any run on a pod with CaseOps
+   symlinks is suspect — always verify token/byte ratio against C6 baseline (0.2683).
+
+8. PreQuantTTT is ruled out (C3 violation) — cannot use the technique that
+   made P3's val_loss so good (2.40 vs 2.78).
+
+────────────────────────────────────────────────────────────────────────────────
+5. P3-fix 2-Seed Reproducibility
+────────────────────────────────────────────────────────────────────────────────
+
+Corrected runs: CASEOPS_ENABLED=1, explicit data paths, sidecar byte counting.
+
+| Seed | Steps  | Pre-Q BPB | Quant BPB | TTT BPB  | Size (bytes) | Eval time |
+|------|--------|-----------|-----------|----------|--------------|-----------|
+| 42   | 12,155 | 1.09218   | 1.11237   | 1.09724  | 15,974,052   | 459s      |
+| 1337 | 12,123 | 1.09260   | 1.11247   | 1.09779  | 15,977,199   | 385s      |
+| Mean | 12,139 | 1.09239   | 1.11242   | 1.09751  | ~15,976K     | —         |
+
+Both seeds: under 16 MB budget, under 600s train time, under 600s eval time.
+Throughput: ~4000K tok/s (higher than earlier Session 21 rerun which got ~3500K).
+
+Log files: parameter-golf/logs/p3_corrected_seed42.txt, p3_corrected_seed1337.txt
+
+────────────────────────────────────────────────────────────────────────────────
+6. Cross-References
+────────────────────────────────────────────────────────────────────────────────
+
+- findings.md lines 562-591: Session 18 (P1a details, 6 hparam overrides)
+- findings.md lines 593-713: Session 19 (P3 details, byte accounting deep-dive)
+- findings.md lines 7-32: 8×H100 leaderboard table + annotations
+- runs/configs/p1a_hparam_sota.env: P1a full config
+- runs/configs/p3_caseops_corrected.env: P3 corrected config
+- neurlps-paper-survey.md: Paper #15 (small batch), Paper #25 (EMA)
+- docs/James_test/run_p3_rerun_correct_bytes.txt: P3 rerun runbook
