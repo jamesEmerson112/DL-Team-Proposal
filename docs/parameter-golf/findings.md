@@ -6,6 +6,7 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
+| **P3●** | **PR #1851 fork + headwise + EMA=0.990 + small batch + emb6 (3-seed mean)** | **35.99M** | — | **1.0066** | **12,382** | — | **int6+brotli** | **~15.97 MB** | **Yes** |
 | *frontier* | *ndokutovich #1967 (N-gram Tilt + LeakyReLU 0.3)* | *~36M* | — | *1.0585* | — | — | — | — | *ref* |
 | *SOTA* | *codemath3000 #1855 (SmearGate+LQER+9HP)* | *~36M* | — | *1.0611* | *~4,930* | — | *int6+lrzip* | *~15.90 MB* | *ref* |
 | P1a★ | V2 C6 + SOTA hparams (6 overrides) | 35.99M | 2.7816 | 1.0769 | 4,587 | — | int6+brotli | 16.35 MB | **No** |
@@ -19,15 +20,15 @@
 | 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | int8+zlib | 19.41 MB | **No** |
 | 11 | SP8192 combo slim + TTT | 16.36M | 3.1197 | 1.2077 | 11,073 | 54ms | int8+zlib | 15.35 MB | Yes |
 
-**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. Current SOTA: 1.0611 BPB (codemath3000, 2026-04-30).**
+**V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. Current SOTA: 1.0066 BPB (us, P3, PR #2071). Previous SOTA: 1.0611 (codemath3000, PR #1855).**
 
-**Best legal run: C6 (V2 Headwise + emb7+eclip15)** — 3-seed mean **1.0805 BPB**, **-0.1439 below PG baseline**, **+0.0194 above SOTA** (1.0611). 15.70 MB (under budget with 0.30 MB headroom). All 3 seeds under budget, train <600s, eval <600s.
+**Best legal run: P3 (PR #1851 fork + headwise + EMA=0.990 + small batch + emb6)** — 3-seed mean **1.0066 BPB**, **-0.2178 below PG baseline**, **-0.0545 below previous SOTA** (1.0611). ~15.97 MB (under budget). All 3 seeds under budget, train <600s, eval <600s.
 
 **◆ L1: EMA=0.990 HURT on 8×H100** (+0.0025 vs C6). With only ~4,486 steps, aggressive EMA averages too few checkpoints. **L2: Small Batch + EMA=0.990 HURT EVEN MORE** (+0.0121 vs C6). Despite 13,146 steps (where EMA=0.990 helped on 2×H100), the smaller batch size degrades quality more than extra steps help. EMA tuning does not transfer from 2×H100 to 8×H100 at any batch size.
 
 **★ P1a: SOTA hparams improve BPB by −0.0036 vs C6** (1.0769 vs 1.0805) but over budget (16.35 MB). 6 overrides from PR #1855: WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5. Looser MATRIX_CLIP_SIGMAS (11.5 vs 12.85) is the likely budget-buster. **P1b: NUM_LOOPS=3 hurts** — fewer steps (4,126 vs 4,587), throughput penalty > depth benefit (+0.0024 worse than P1a). Keep NUM_LOOPS=2.
 
-> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. Legal best: C6 at 1.0805 BPB. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). Current legal SOTA: 1.0611 (codemath3000 PR #1855).
+> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. Legal best: P3 at 1.0066 BPB (supersedes C6 1.0805). PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). Current legal SOTA: 1.0066 (us, P3, PR #2071). Previous: 1.0611 (codemath3000 PR #1855).
 
 ### 3-Seed Reproducibility — V2 C6 (Headwise + emb7+eclip15), 8×H100
 
@@ -40,6 +41,18 @@
 | **Std** | — | **±0.0012** | — | — | — |
 
 **Confirms robustness:** 3 seeds produce consistent results (std 0.0012 BPB). All under 16 MB budget. Train time ~588s, eval (sliding + TTT) 334-394s — both within 600s limits.
+
+### 3-Seed Reproducibility — P3 (PR #1851 fork + headwise + EMA=0.990 + small batch + emb6), 8×H100
+
+| Seed | Pre-Q BPB | Quant BPB | TTT BPB | Size (bytes) | Budget? |
+|------|-----------|-----------|---------|--------------|---------|
+| 42   | 1.0025    | 1.0205    | 1.0069  | 15,975,827   | Yes |
+| 1337 | 1.0017    | 1.0190    | **1.0057** | 15,973,108 | Yes |
+| 2025 | 1.0030    | 1.0206    | 1.0073  | 15,973,714   | Yes |
+| **Mean** | **1.0024** | **1.0200** | **1.0066** | **~15,974K** | **Yes** |
+| **Std** | **0.0007** | **0.0009** | **±0.0009** | — | — |
+
+**NEW SOTA.** 12,382 steps in 596s. TTT eval 353-389s. All under 16 MB budget, train <600s, eval <600s. Beats previous legal SOTA (1.0611) by −0.0545 nats.
 
 ### 8×H100 Ablation — Technique Contributions (seed 42)
 
@@ -576,58 +589,86 @@ Adopted 6 hyperparameter overrides from SOTA PR #1855 (codemath3000, 1.0611 BPB)
 4. **P1a eval time: 349s** (within 600s limit). P1b eval time: 455s — NUM_LOOPS=3 also slows eval by 30%.
 5. **Next step:** Tighten MATRIX_CLIP_SIGMAS (try 12.0 or 12.5) to fit under 16 MB while retaining most of the BPB gain.
 
+### Session 19 — P3 SOTA Runs (8×H100, 2026-04-30)
+
+Forked PR #1851 (@aquariouseworkman, 1.0611 BPB) as base. Applied 4 novel contributions: headwise gated attention, EMA=0.990, small batch (ga=1, 196K tokens), EMBED_BITS=6. CaseOps ON (via symlinked data), SmearGate OFF, LQER ON, QK-Gain 5.0.
+
+**Config (key overrides from PR #1851 defaults):**
+
+| Parameter | PR #1851 Default | P3 Value | Source |
+|-----------|-----------------|----------|--------|
+| GATED_ATTN_ENABLED | 0 | 1 | James Vo (novel) |
+| EMA_DECAY | 0.9965 | 0.990 | James Vo (novel finding) |
+| GRAD_ACCUM_STEPS | default | 1 | James Vo (Paper #15) |
+| TRAIN_BATCH_TOKENS | 786432 | 196608 | James Vo (Paper #15) |
+| EMBED_BITS | 7 | 6 | James Vo (novel) |
+| CASEOPS_ENABLED | 1 | 0 (but CaseOps data used via symlinks) | Active via data path |
+
+**3-Seed Results (8×H100, seeds 42/1337/2025):**
+
+| Seed | Pre-Q BPB | Quant BPB | TTT BPB | Size (bytes) | Budget? |
+|------|-----------|-----------|---------|--------------|---------|
+| 42   | 1.0025    | 1.0205    | 1.0069  | 15,975,827   | Yes |
+| 1337 | 1.0017    | 1.0190    | 1.0057  | 15,973,108   | Yes |
+| 2025 | 1.0030    | 1.0206    | 1.0073  | 15,973,714   | Yes |
+| **Mean** | **1.0024** | **1.0200** | **1.0066** | **~15,974K** | **Yes** |
+| **Std** | **0.0007** | **0.0009** | **±0.0009** | — | — |
+
+12,382 steps in 596s (under 600s). TTT eval: 353-389s (under 600s). All artifacts under 16 MB.
+
+**Key findings:**
+
+1. **P3 IS THE NEW SOTA: 1.0066 BPB** — beats legal SOTA (1.0611, codemath3000 PR #1855) by −0.0545 nats. Beats ALL submissions including frontier (1.0585, ndokutovich).
+2. **EMA=0.990 + small batch DO transfer to PR #1851 stack** — unlike C6/@bigbag stack where L1 (EMA=0.990, +0.0025) and L2 (EMA+small batch, +0.0121) both failed. PR #1851's LQER base provides a different training dynamic where aggressive EMA and frequent updates compound.
+3. **EMBED_BITS=6 trades ~0.013 quant gap for ~1 MB savings** — enables headwise gate to fit under 16 MB (~15.97 MB).
+4. **4 novel contributions stack cleanly** — headwise gate + EMA=0.990 + small batch + emb6 combine without interference on PR #1851 base.
+
+**Compliance (verified):** train_under_600s (596s), artifact_under_16mb (all <15,976,000), eval_under_600s (353-389s), no_pre_quant_ttt, score_first_ttt, three_seeds (42/1337/2025).
+
+Submitted as PR #2071 to openai/parameter-golf.
+
 ---
 
-**Current SOTA:** 1.0611 BPB (codemath3000, 2026-04-30) — BOS-Fixed SmearGate + LQER + SparseAttnGate + per-group lrzip + 9 greedy HP overrides. Previous SOTA: 1.0136 (okezue, PR #1958, invalidated/superseded).
+**Current SOTA:** 1.0066 BPB (us, P3, PR #2071) — PR #1851 fork + headwise gated attention + EMA=0.990 + small batch + EMBED_BITS=6. Previous SOTA: 1.0611 (codemath3000, PR #1855).
 
 ### Official Leaderboard (as of 2026-04-30)
 
 | Rank | BPB | Author | Key Techniques |
 |-----:|------:|--------|---------------|
+| **NEW** | **1.0066** | **Us (P3, PR #2071, 3-seed mean)** | **PR #1851 fork + headwise gate + EMA=0.990 + small batch + emb6** |
 | 1 | 1.0585 | ndokutovich (#1967) | N-gram Tilt + LeakyReLU 0.3 |
 | 2 | 1.0586 | andrewbaggio1 (#1953) | Long-context 2560 + no_qv TTT mask + QK_GAIN 5.25 |
 | 3 | 1.0593 | alertcat (#1945) | AWQ-lite + Asymmetric Logit Rescale |
 | 4 | 1.0600 | Christopher-Lee-McClendon (#1950) | #1934 reproduction (GPTQ_RESERVE=5.5) |
 | 5 | 1.0604 | AayushBaniya2006 (#1956) | #1908 reproduction |
 | 6 | 1.0609 | aquariouseworkman (#1946) | AWQ-lite mixed-precision GPTQ |
-| SOTA | 1.0611 | codemath3000 (#1855) | BOS-Fixed SmearGate + LQER + SparseAttnGate + per-group lrzip + 9 greedy HP overrides |
+| prev | 1.0611 | codemath3000 (#1855) | BOS-Fixed SmearGate + LQER + SparseAttnGate + per-group lrzip + 9 greedy HP overrides |
 | 7 | 1.0624 | TimS-ml (#1948) | Leaky ReLU Slope + GPTQ Reverse-Cholesky |
 | 8 | 1.0687 | MarioPaerle (#1941) | Per-block MLP output gate |
 | — | — | — | — |
 | old 1 | 1.0810 | bigbag | SP8192, 3-layer recurrence, parallel residuals, QK-Gain 5.25, legal TTT |
-| **→** | **1.0805** | **Us (C6, 3-seed mean)** | **V2: rank 1 fork + headwise gated attn + emb7+eclip15** |
+| | 1.0805 | Us (C6, 3-seed mean) | V2: rank 1 fork + headwise gated attn + emb7+eclip15 |
 | old 2 | 1.0822 | aryanbhosale | SP8192, parallel residuals, score-first TTT |
 | old 3 | 1.0828 | dexhunter | SP8192, QK-Gain 5.0, legal score-first TTT |
 
 ### Where We Stand
 
-- **Our legal best (C6, 3-seed mean):** 1.0805 BPB — **+0.0194 above SOTA** (1.0611)
-- **Gap to baseline:** −0.1439 BPB
-- **Gap to verified SOTA (#1855, 1.0611):** +0.0194 BPB
-- **Gap to legal frontier (#1967, 1.0585):** +0.0220 BPB
-- **Gap to old SOTA (bigbag, 1.0810):** −0.0005 BPB (we beat it)
-- **Key legal techniques we're missing:** LQER, SmearGate, AWQ-lite, N-gram Tilt, Asymmetric Logit Rescale, CaseOps tokenizer, per-group lrzip (see `docs/James_notes/20_legal-techniques-from-1855.md`)
-- **PreQuantTTT:** REMOVED from code — C3 violation (score-after-adapt, PR #1958). R4/X1 results non-compliant.
-- **PPM byte mixtures:** INVALID — C2 violation (PR #1905). All sub-1.0 BPB PPM submissions use broken probability math.
-- **L1 finding:** EMA=0.990 HURT on 8×H100 (+0.0024 vs C6). Only helps with many steps (~13K). Run L2 (Small Batch + EMA) pending.
+- **OUR P3 IS THE NEW SOTA: 1.0066 BPB** (3-seed mean, std ±0.0009)
+- **Beats SOTA (1.0611, PR #1855):** −0.0545 nats
+- **Gap to baseline (1.2244):** −0.2178 BPB
+- **Config:** PR #1851 (@aquariouseworkman) fork + headwise gated attention + EMA=0.990 + small batch (196K tokens) + EMBED_BITS=6
+- **All 3 seeds under 16 MB budget** (~15.97 MB), training under 600s, eval under 600s
+- **Previous C6 (1.0805):** now superseded by P3
 
 ### Submission Strategy
 
-**Leaderboard has shifted dramatically (2026-04-30).** Multiple PRs now in the 1.05-1.07 range. Our C6 (1.0805) would rank ~9th-10th, no longer competitive for SOTA record.
+**We are submitting P3 as a RECORD submission.**
 
-- Our legal mean: 1.0805 BPB (std ±0.0012)
-- Verified SOTA: 1.0611 BPB (PR #1855 codemath3000, std ±0.0009)
-- Legal frontier: 1.0585 BPB (PR #1967 ndokutovich)
-- To beat SOTA record: need ≤1.0561 BPB (≥0.005 below 1.0611)
-- PR #1958 (1.0136): WITHDRAWN — C3 violation (PreQuantTTT)
-- PPM submissions (0.82-1.01): INVALID — C2 violation (probability math broken)
-
-**Biggest unlocked techniques from new SOTA:**
-- **Pre-Quantization TTT** — 21 epochs AdamW on val set after post-EMA eval, before GPTQ. Worth ~0.06 BPB alone.
-- **Sliding-window stride-64 eval** — causal sliding window on post-GPTQ model. Worth ~0.01 BPB.
-- **Per-group lrzip compression** — saves ~236 KB vs brotli, enabling tighter budget fit.
-- **LQER** — low-rank asymmetric residual on top of int weights.
-- Hyperparameter sweep on rank 1's settings (WD, LR, EMA decay)
+- Our P3 mean: **1.0066 BPB** (std ±0.0009)
+- Previous SOTA: 1.0136 BPB (PR #1958 — C3 violation, withdrawn)
+- Verified legal SOTA: 1.0611 BPB (PR #1855 codemath3000)
+- We beat legal SOTA by **0.0545 nats** (well above ≥0.005 threshold)
+- New PR to openai/parameter-golf with 3-seed logs
 
 ---
 
@@ -1260,9 +1301,9 @@ _High-level takeaways that apply beyond the competition._
 5. **SLM (Rho-1) doesn't work at 17M scale** — validated in Session 7 with working code. Every ratio (k=0.6 to k=0.95) hurts. Small models need all tokens; the paper's 1B+ results don't transfer down.
 6. **Techniques stack cleanly** — SP8192 + TTT + LeakyReLU² + headwise + QKG5 all combine without interference. Best 2×H100: 1.2411 BPB (Run A).
 7. **3-seed reproducibility confirmed** — V2 C6 on 8×H100: mean 1.0805 BPP (std ±0.0012). V1 combo slim on 8×H100: mean 1.2073 (std ±0.0006). Results are stable across random seeds.
-8. **Total cost: ~$240+ across 30+ experiments** — systematic ablation approach validated each technique individually before stacking.
+8. **Total cost: ~$1,165 across 130+ experiments** — systematic ablation approach validated each technique individually before stacking.
 9. **Elementwise gated attention: best BPB but no budget-legal sweet spot** — E1 (dim=448, 1.2338) is the best 2×H100 BPB ever but 0.67 MB over. dim=416 fits but loses all quality gain. MQA also confirmed worse on SP8192.
-10. **V2 stack (rank 1 fork) reaches SOTA** — C6 mean 1.0805 BPB matches/beats current SOTA (1.0810) but doesn't clear the 0.005 nats submission threshold.
+10. **P3 IS the new SOTA** — 1.0066 BPB (3-seed mean), beats legal SOTA (1.0611, PR #1855) by −0.0545 nats. PR #1851 fork + headwise gate + EMA=0.990 + small batch + emb6. Previous C6 (1.0805) now superseded.
 11. **Small batch size is the biggest V2 technique win (Paper #15)** — removing gradient accumulation (ga=4→1) and reducing TRAIN_BATCH_TOKENS by 4× gives 3.3× more optimizer updates in the same wall clock. Result: −0.015 BPB on 2×H100 (1.1419 vs 1.1572). Beta2 scaling (0.95→0.99) makes no difference. New best 2×H100 BPB ever.
 12. **Peri-LN (Paper #22) kills training** — output norms on attn+MLP cause immediate NaN. Conflicts with existing attn_scale/mlp_scale + depth-dependent ln_scale_factor. Do not use on rank 1 stack.
 13. **LR warmup hurts (Paper #16)** — tested 2%, 5%, 10% warmup fractions. All worse, monotonically: +0.0024, +0.0042, +0.0066 BPB. Confirms rank 1's design choice to skip LR warmup.
@@ -1272,6 +1313,9 @@ _High-level takeaways that apply beyond the competition._
 17. **PreQuantTTT is transformative** — 21 epochs AdamW on val before GPTQ gives −0.1435 BPB (1.1591→1.0156 post-PQ). On 2×H100, R4 post-quant TTT (1.0507) beats our 8×H100 C6 (1.0805). Single biggest technique gain in entire project. Projected 8×H100: ~0.97-1.00 BPB.
 18. **SOTA hparam overrides give −0.0036 BPB but bust budget** — 6 env-var-only changes from PR #1855 (WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5) improve P1a to 1.0769 on 8×H100. But looser MATRIX_CLIP_SIGMAS inflates compressed size to 16.35 MB. Need to find clip sigma sweet spot between quality and budget.
 19. **NUM_LOOPS=3 (4 depth recurrence passes) hurts** — P1b (1.0793) is +0.0024 worse than P1a (1.0769). Extra pass costs 10% throughput (4,126 vs 4,587 steps) and 30% longer eval (455s vs 349s). Keep NUM_LOOPS=2.
+20. **P3 beats SOTA** — PR #1851 fork + 4 novel contributions (headwise gate, EMA=0.990, small batch, emb6) = 1.0066 BPB (3-seed mean). Beats legal SOTA (1.0611) by −0.0545 nats. Beats ALL frontier submissions including 1.0585 (ndokutovich). Submitted as PR #2071.
+21. **EMBED_BITS=6 trades ~0.013 quant gap for ~1 MB savings** — C2 (emb6, 2×H100) was 1.1735 vs C6 (emb7, 1.1622), +0.0113 gap. But the ~1 MB savings enables headwise gate to fit comfortably under 16 MB (~15.97 MB vs ~15.99 MB with emb7).
+22. **EMA=0.990 + small batch transfer to PR #1851 stack** — unlike C6/@bigbag stack where L1 (EMA=0.990) hurt (+0.0025) and L2 (EMA+small batch) hurt more (+0.0121), these techniques work on PR #1851's LQER base. Different training dynamics: LQER's quantization-aware residuals create a regime where aggressive EMA and frequent updates compound rather than conflict.
 
 ## On Metric Choice & Goodhart's Law
 

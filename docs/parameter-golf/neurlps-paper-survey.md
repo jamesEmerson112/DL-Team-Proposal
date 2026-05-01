@@ -4,7 +4,7 @@ Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) 
 (17M param GPT, 16 MB artifact, 10 min on 8xH100, 1024-token vocab, FineWeb).
 
 **Last updated:** 2026-04-30
-**Current SOTA:** 1.0611 BPB (codemath3000) | **Baseline:** 1.2244 BPB | **Our best:** 1.0805 (C6, 3-seed mean, 8×H100) | **Best 2×H100:** 1.1368 (N1, EMA+SmallBatch) | **Best raw:** 1.0801 (A3, headwise no compression, 8×H100, over budget)
+**Current SOTA:** 1.0066 BPB (us, P3, PR #2071, NEW SOTA) | **Baseline:** 1.2244 BPB | **Our best:** 1.0066 (P3, 3-seed mean, 8×H100) | **Best 2×H100:** 1.1368 (N1, EMA+SmallBatch) | **Previous SOTA:** 1.0611 (codemath3000, PR #1855)
 
 ---
 
@@ -14,7 +14,7 @@ Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) 
 |---|-------|-------|------|---------------|----------------|--------------------------------|
 | 26 | **Exclusive Self-Attention (XSA)** | arXiv 2026 | [arxiv](https://arxiv.org/abs/2603.09078) | Attention orthogonal to self-value vector; forces better context modeling | **Proven** — ranks 8,10,14,15 (best 1.0979) | Consistently outperforms standard self-attention up to 2.7B. Minimal overhead. Widely adopted on leaderboard. |
 | 29 | **Cross-Sequence Attention** | PG competition technique (2026) | N/A | Attend across sequence boundaries in deepest 3-4 layers during evaluation | **Proven** — ranks 14,15 (1.1307) | Eval-time only trick, no training change. Partial XSA on last 3-4 layers. High priority since validated by top submissions. |
-| 15 | **Small Batch Size Training / Why Gradient Accumulation is Wasteful** | NeurIPS 2025 | [neurips](https://neurips.cc/virtual/2025/poster/119899) | Small batch sizes are stable with proper Adam hyperparameter scaling; avoiding gradient accumulation improves per-FLOP performance | **Tested — CONTEXT-DEPENDENT** (paper read) | **2×H100:** SUCCESS — ga=4→1 gives −0.015 BPB (B2=1.1419 vs C6=1.1572). **8×H100:** FAILS — ga already 1 by default; reducing TRAIN_BATCH_TOKENS to get more steps hurts quality (L2=1.0926 vs C6=1.0805, +0.0121). The win was about eliminating GA overhead, not about smaller batches per se. |
+| 15 | **Small Batch Size Training / Why Gradient Accumulation is Wasteful** | NeurIPS 2025 | [neurips](https://neurips.cc/virtual/2025/poster/119899) | Small batch sizes are stable with proper Adam hyperparameter scaling; avoiding gradient accumulation improves per-FLOP performance | **Tested — CONTEXT-DEPENDENT** (paper read) | **2×H100:** SUCCESS — ga=4→1 gives −0.015 BPB (B2=1.1419 vs C6=1.1572). **8×H100 on C6/@bigbag stack:** FAILS — L2=1.0926 vs C6=1.0805 (+0.0121). **8×H100 on PR #1851 stack:** SUCCESS — P3=1.0066 (NEW SOTA). Works when combined with EMA=0.990 on LQER base. Context-dependent: fails on C6/@bigbag stack, works on PR #1851 stack. |
 | 21 | **HybridNorm** | NeurIPS 2025 | [arxiv](https://arxiv.org/abs/2503.04598) | QKV normalization inside attention + Post-Norm in FFN; combines Pre-Norm stability with Post-Norm performance | **Tested — FAILS** (Ashray, rank 4) | **Session 17:** Ashray tested V-norm + Post-Norm FFN on rank 4 stack → +0.011 BPB regression. Already-normalized architectures (QK-norm, ln_scale, attn_scale/mlp_scale) conflict with additional norms. |
 | 19 | **Differential Attention (Diff Transformer)** | ICLR 2025 (Oral) | [arxiv](https://arxiv.org/abs/2410.05258) | Computes attention as the difference of two softmax maps; cancels noise, promotes sparse attention | **Tested — FAILS** | **Session 17:** Split Q/K in half, two FA3 calls, subtract with learnable λ. N2 = 1.1506 vs N1 = 1.1368 (+0.0138 regression). Root cause: 2× FA3 calls → 22% fewer steps (1,444 vs 1,853). Throughput penalty outweighs attention quality at 36M under 10-min wall clock. |
 | 20 | **Value Residual Learning (ResFormer)** | ACL 2025 | [arxiv](https://arxiv.org/abs/2410.17897) | Residual connection from first layer's V matrix to all subsequent layers; mitigates attention concentration | **Tested — HURTS on rank 1 stack at all scales.** 2×H100: +0.0025 (F4 vs F1). 8×H100: +0.0022 (A2=1.0828 vs A1=1.0806). α=0.5 helps on simple 10L MHA stack (-0.0048, Session 11) but redundant with parallel residuals. | Not recommended for rank 1-style configs. Confirmed across 2× and 8×H100. |
@@ -57,10 +57,10 @@ Techniques confirmed used by top PG submissions as of April 2026:
 | XSA / Cross-Sequence Attention | #26, #29 | 1.0979 | Ranks 8, 10, 14, 15 | Eval-time |
 | FlashAttention-3 | #24 | 1.1307 | Rank 15 | Throughput |
 | Value Residual Learning | #20 | 1.0979 (mentioned) | Rank 8 | Architecture |
-| Depth Recurrence (MoEUT-style) | #7 | 1.0810 (SOTA) | Rank 1 | Architecture |
-| Vocab Scaling (SP4096/SP8192) | #3 | 1.0810 (SOTA) | Ranks 1-8 | Data/Tokenizer |
-| Gated Attention (our technique) | N/A | 1.0801 (A3, 8×H100, over budget) | V2 rank 1 fork + headwise gate | Architecture |
-| Full rank 1 stack + our techniques | #7,#24,#25,#26 | 1.0805 (C6 mean, 8×H100) | V2 C6 submission config | Combined |
+| Depth Recurrence (MoEUT-style) | #7 | 1.0066 (P3, NEW SOTA) | Rank 1, P3 | Architecture |
+| Vocab Scaling (SP4096/SP8192) | #3 | 1.0066 (P3, NEW SOTA) | Ranks 1-8, P3 | Data/Tokenizer |
+| Gated Attention (our technique) | N/A | 1.0066 (P3, 8×H100, NEW SOTA) | PR #1851 fork + headwise gate | Architecture |
+| Full stack + our techniques | #7,#15,#24,#25,#26 | 1.0066 (P3 mean, 8×H100, NEW SOTA) | PR #1851 fork + headwise gate + EMA=0.990 + small batch + emb6 | Combined |
 
 Additional confirmed leaderboard techniques (not from papers above):
 - **LoRA TTT** — test-time training with low-rank updates
@@ -70,9 +70,9 @@ Additional confirmed leaderboard techniques (not from papers above):
 - **GPTQ Embeddings + SDClip** — Hessian-aware quantization with per-layer clipping
 - **MuonEq-R** — row-normalized Muon optimizer
 - **Parallel Residuals** — GPT-J style separate attention/MLP residual streams
-- **QK-Gain** — learnable per-head attention scaling (optimal 5.25)
+- **QK-Gain** — learnable per-head attention scaling (5.0-5.25)
 
-Current SOTA: **1.0810 BPB** (bigbag, rank 1). Our best: **1.0805 BPB** (C6, 3-seed mean, 8×H100).
+Current SOTA: **1.0066 BPB** (us, P3, 3-seed mean, 8×H100, PR #2071). Previous SOTA: 1.0611 (codemath3000, PR #1855).
 
 ---
 
@@ -107,7 +107,7 @@ No LR schedule needed — perfect for fixed 10-min wall clock where step count i
 ~~Replace the dense FFN with structured matrices.~~ **Session 15:** Implemented low-rank up-proj (dim→rank→hidden) + block-diagonal down-proj. Two configs: r=0.5/b=4 (23M params, 13.9 MB, +0.0425 BPB) and r=0.75/b=8 (25.2M, 13.0 MB, +0.0496 BPB). Impressive param/size savings but BPB degradation is 10× too large. Paper tested at 125M+; the quality-throughput tradeoff doesn't favor structured FFN at 36M. **Do not use.**
 
 ### 8. Layer Tying / Depth Recurrence (MoEUT style) — Paper #7 ✅ NOW IN USE
-**Impact: HIGH | Effort: HIGH | Leaderboard: Proven (SOTA rank 1, 1.0810)**
+**Impact: HIGH | Effort: HIGH | Leaderboard: Proven (used in P3 SOTA 1.0066, originally rank 1 1.0810)**
 Share weights across layers but add lightweight per-layer routing or adapters. A 9-layer model with 3 unique layer groups would have ~1/3 the parameters but similar effective depth. The freed parameter budget goes to wider dimensions or more heads. This is the single biggest lever for the 16 MB constraint. **Now in use** — V2 uses layers 3-4-5 looped 2× (17 virtual layers from 11 physical). C6 = 1.0805 BPB (8×H100).
 
 ---
@@ -125,17 +125,19 @@ Share weights across layers but add lightweight per-layer routing or adapters. A
 - **QK-Gain 5.0** — learnable per-head attention scaling
 - **TTT (score-first)** — test-time training at evaluation
 
-**V2 stack (rank 1 fork train_gpt_v2.py, C6 = 1.0805 BPB 8×H100, A3 = 1.0801 raw) — adds:**
+**V2 stack (rank 1 fork train_gpt_v2.py, C6 = 1.0805 BPB, P3 = 1.0066 BPB NEW SOTA, 8×H100) — adds:**
 - **Depth Recurrence** — layers 3-4-5 looped 2× (17 virtual from 11 physical) [Survey #7]
 - **Parallel Residuals** — layers 7+ GPT-J style
 - **Sigmoid Skip Gates** — learned encoder-decoder bridging
 - **XSA (Exclusive Self-Attention)** — all 11 layers [Survey #26]
-- **QK-Gain 5.25** — tuned up from 5.0
+- **QK-Gain 5.0-5.25** — learnable per-head attention scaling
 - **Partial RoPE** — 16/64 dims (upgraded from full RoPE)
 - **LN Scale 1/√(layer+1)** — depth-dependent normalization scaling
 - **MuonEq-R** — row-normalized Muon with WD=0.095
-- **EMA decay 0.9965** — exponential moving average [Survey #25]
+- **EMA decay 0.9965** (C6) / **0.990** (P3) — exponential moving average [Survey #25]
 - **GPTQ int6 + int8 embed + brotli** — enables 35.9M params in 16 MB
+- **Small batch (ga=1, 196K tokens)** — more optimizer updates in wall clock [Survey #15, P3]
+- **EMBED_BITS=6** — 6-bit embedding quantization, trades ~0.013 quant gap for ~1 MB savings [P3]
 - **FlashAttention-3** — 2x throughput over FA2 on H100 [Survey #24]
 - **Gated Attention (headwise)** — our original technique, ported to V2
 
