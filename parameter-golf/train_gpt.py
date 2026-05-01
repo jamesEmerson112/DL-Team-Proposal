@@ -3545,6 +3545,12 @@ def main():
         log("=" * 100, console=False)
         log(f"Running Python {sys.version}", console=False)
         log(f"Running PyTorch {torch.__version__}", console=False)
+        try:
+            nvsmi = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
+            if nvsmi.returncode == 0:
+                log(nvsmi.stdout, console=False)
+        except Exception:
+            pass
         log("=" * 100, console=False)
     train_and_eval(h, device)
     if distributed:

@@ -1,0 +1,262 @@
+Logging Format Reference for train_gpt.py
+==========================================
+Generated from actual log files. Two formats exist:
+  V2 format  — train_gpt_v2.py (@bigbag fork, used for C6)
+  P3 format  — train_gpt.py (PR #1851/codemath3000 fork, used for P3)
+
+Source logs:
+  parameter-golf/logs/v2_c6_seed42.txt      (V2, 243 lines, 8xH100)
+  parameter-golf/logs/p3_1851_seed42_emb6.txt (P3, 4113 lines, 8xH100)
+
+Logging system (P3 train_gpt.py):
+  log() function:        lines 438-447   (writes stdout + file)
+  Logfile path:          lines 413-417   (logs/{run_id}.txt)
+  Init call:             line 3532       (set_logging_hparams(h))
+  Dir creation:          line 3534       (os.makedirs("logs", exist_ok=True))
+  Note: if RUN_ID not set, defaults to UUID — log exists but hard to find.
+
+================================================================================
+PHASE 1: HEADER — Hyperparameters table
+================================================================================
+Both formats identical. Sorted alphabetically, one key:value per line.
+
+  ====================================================================================================
+  Hyperparameters:
+    adam_eps: 1e-08
+    adam_wd: 0.02
+    beta1: 0.9
+    beta2: 0.95
+    compressor: brotli
+    ...
+    warmup_steps: 20
+    world_size: 8
+    xsa_last_n: 11
+  ====================================================================================================
+
+V2 has ~88 keys (lines 1-91). P3 has ~126 keys (lines 1-127) due to extra features
+(caseops, lqer, phased_ttt, global_ttt, parallel, fused_ce, etc.).
+
+================================================================================
+PHASE 2: STARTUP — System info (file-only in P3, inline in V2)
+================================================================================
+V2 format (inline, ~50 lines):
+  Running Python 3.11.10 (main, Sep  7 2024, 18:35:41) [GCC 11.4.0]
+  Running PyTorch 2.11.0+cu130
+  Wed Apr 29 12:07:07 2026
+  +-----------------------------------------------------------------------------------------+
+  | NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
+  ...
+  ====================================================================================================
+
+(P3 format also has this but prefixed by a ~3560-line source code dump)
+
+================================================================================
+PHASE 3: INIT — Data and model info
+================================================================================
+Both formats identical structure:
+
+  train_shards: 80
+  val_tokens: 40540160                    (V2: 40540160, P3: 47851520)
+  model_params:35989592                   (V2: 35989592, P3: 35989658)
+  gptq:reserving 12s, effective=588000ms  (V2: 12s/588000ms, P3: 4s/596000ms)
+
+================================================================================
+PHASE 4: WARMUP — Compile warmup steps
+================================================================================
+Both formats identical. Sparse reporting (1-6, 10, 20):
+
+  warmup_step: 1/20
+  warmup_step: 2/20
+  warmup_step: 3/20
+  warmup_step: 4/20
+  warmup_step: 5/20
+  warmup_step: 6/20
+  warmup_step: 10/20
+  warmup_step: 20/20
+
+================================================================================
+PHASE 5: LOOP WARMUP — Depth recurrence warmup
+================================================================================
+Both formats identical:
+
+  loop_warmup:enabled encoder:[0, 1, 2, 3, 4, 5, 3, 4] decoder:[5, 3, 4, 5, 6, 7, 8, 9, 10]
+  loop_warmup_step: 1/20
+  loop_warmup_step: 2/20
+  ...
+  loop_warmup_step: 20/20
+
+================================================================================
+PHASE 6: TRAINING LOOP — Val/train metrics
+================================================================================
+Format: {step}/{total_iterations} {metric_type}: {value}
+
+--- Val lines (at step 0, then every val_loss_every steps, plus final) ---
+  0/20000 val_loss: 9.0045 val_bpb: 3.4859
+  500/20000 val_loss: 3.3234 val_bpb: 1.2866
+  1000/20000 val_loss: 3.2036 val_bpb: 1.2402
+  ...
+  4469/20000 val_loss: 2.8122 val_bpb: 1.0887
+
+--- Train lines (first 5 steps individually, then every train_log_every) ---
+  1/20000 train_loss: 9.0064 train_time: 0.0m tok/s: 8012323
+  2/20000 train_loss: 12.3019 train_time: 0.0m tok/s: 7924952
+  3/20000 train_loss: 10.9537 train_time: 0.0m tok/s: 7854995
+  4/20000 train_loss: 9.4041 train_time: 0.0m tok/s: 7816103
+  5/20000 train_loss: 8.2936 train_time: 0.0m tok/s: 7784731
+  100/20000 train_loss: 4.5489 train_time: 0.2m tok/s: 7603114
+  200/20000 train_loss: 3.7193 train_time: 0.3m tok/s: 7602987
+  ...
+
+--- Layer loop enable (at enable_looping_at fraction of training) ---
+Both formats identical:
+  layer_loop:enabled step:1984 frac:0.350 encoder:[0, 1, 2, 3, 4, 5, 3, 4] decoder:[5, 3, 4, 5, 6, 7, 8, 9, 10]
+
+V2: triggers at step 1984 (35% of 5667 effective steps)
+P3: triggers at step 4466 (35% of 12760 effective steps)
+
+--- Early stop ---
+Both formats identical:
+  stopping_early: wallclock_cap train_time: 588009ms step: 4469/20000    (V2)
+  stopping_early: wallclock_cap train_time: 596015ms step: 12382/20000   (P3)
+
+================================================================================
+PHASE 7: POST-TRAINING — Peak memory
+================================================================================
+  peak memory allocated: 10865 MiB reserved: 18090 MiB
+
+================================================================================
+PHASE 8: EMA — Exponential moving average
+================================================================================
+  ema:applying EMA weights
+
+================================================================================
+PHASE 9: PRE-QUANT EVAL — Post-EMA validation
+================================================================================
+  diagnostic pre-quantization post-ema val_loss:2.39021570 val_bpb:1.00247081 eval_time:7124ms
+
+================================================================================
+PHASE 10: SERIALIZATION — Model save
+================================================================================
+V2 format:
+  Serialized model: 135611257 bytes
+  Code size: 50027 bytes
+
+P3 format (split compressed/uncompressed code size):
+  Serialized model: 135592891 bytes
+  Code size (uncompressed): 151807 bytes
+  Code size (compressed): 31260 bytes
+
+================================================================================
+PHASE 11: GPTQ — Post-training quantization
+================================================================================
+  GPTQ:collecting Hessians from calibration data...
+  GPTQ:collected 67 Hessians in 1.2s
+  Quantized weights:
+    gptq (int6): blocks.attn.c_k.weight, blocks.attn.c_q.weight, blocks.attn.c_v.weight, blocks.attn.proj.weight, blocks.mlp.fc.weight, blocks.mlp.proj.weight
+    gptq (int6)+lqer_asym: blocks.mlp.fc.weight, tok_emb.weight
+    passthrough (float16): blocks.attn.attn_gate_w, blocks.attn.q_gain, blocks.attn_scale, blocks.mlp_scale, blocks.resid_mix, parallel_post_lambdas, parallel_resid_lambdas, skip_gates, skip_weights
+  Serialized model quantized+brotli: 15944567 bytes
+  Total submission size quantized+brotli: 15975827 bytes
+
+================================================================================
+PHASE 12: QUANTIZED EVAL — Post-GPTQ validation
+================================================================================
+  diagnostic quantized val_loss:2.43329379 val_bpb:1.02053802 eval_time:5149ms
+
+================================================================================
+PHASE 13: SLIDING WINDOW EVAL — not present in P3 (TTT subsumes it)
+================================================================================
+
+================================================================================
+PHASE 14: TTT — Test-Time Training
+================================================================================
+
+Phased TTT with LoRA + global TTT. Multi-stage process:
+
+1. Compile warmup:
+  ttt_lora:warming up compile (random tokens, no val data)
+  ttt_lora:compile warmup done (104.8s)
+
+2. Timer start + phased TTT header:
+  beginning TTT eval timer
+  ttt_phased: total_docs:50000 prefix_docs:2000 suffix_docs:48000 num_phases:1 boundaries:[2000]
+
+3. Prefix eval (before any gradient updates):
+  ttp: b781/782 bl:2.2188 bb:0.9929 rl:2.2188 rb:0.9929 dl:17258-30330 gd:0
+       ^^^                                                               ^^^
+       batch progress                                                   gd:0 = no gradient updates yet
+
+4. Phase complete + global TTT chunks:
+  ttpp: phase:1/1 pd:2448 gd:2000 t:174.2s
+  tttg: c1/250 lr:0.001000 t:0.3s
+  tttg: c2/250 lr:0.001000 t:0.4s
+  ...
+  tttg: c249/250 lr:0.000000 t:21.0s
+
+5. Phase result:
+  ttpr: phase:1/1 t:197.2s
+
+6. Suffix eval (with gradient updates, gd:1):
+  ttp: b742/782 bl:2.4039 bb:0.9994 rl:2.2393 rb:0.9937 dl:2730-2762 gd:1
+  ttp: b731/782 bl:2.4194 bb:0.9956 rl:2.2552 rb:0.9938 dl:2377-2414 gd:1
+  ...
+  ttp: b7/782 bl:2.8355 bb:1.1623 rl:2.3647 rb:1.0034 dl:101-103 gd:1
+
+7. Final result:
+  quantized_ttt_phased val_loss:2.40073153 val_bpb:1.00692894 eval_time:352953ms
+  total_eval_time:353.0s
+
+--- ttp field definitions ---
+  ttp: bN/M bl:X.XXXX bb:X.XXXX rl:X.XXXX rb:X.XXXX dl:N-N gd:N
+       |     |         |         |         |         |      |
+       |     |         |         |         |         |      gradient updates done (0=prefix, 1=suffix)
+       |     |         |         |         |         doc length range in batch
+       |     |         |         |         running BPB (cumulative)
+       |     |         |         running loss (cumulative)
+       |     |         batch BPB (this batch only)
+       |     batch loss (this batch only)
+       batch progress (remaining/total, counts DOWN)
+
+--- tttg field definitions ---
+  tttg: cN/M lr:X.XXXXXX t:X.Xs
+        |     |            |
+        |     |            wall time elapsed
+        |     current learning rate (cosine decay)
+        chunk progress
+
+--- ttpp/ttpr field definitions ---
+  ttpp: phase:N/M pd:N gd:N t:X.Xs      (phase prefix complete)
+        |         |    |    |
+        |         |    |    time for prefix eval
+        |         |    gradient docs processed
+        |         prefix docs processed
+        phase progress
+
+  ttpr: phase:N/M t:X.Xs                 (phase global TTT complete)
+        |         |
+        |         time for global TTT training
+        phase progress
+
+================================================================================
+COMPLETE LIFECYCLE SUMMARY (P3 / PR #1851 format)
+================================================================================
+  1.  ==== separator + Hyperparameters (~126 keys, sorted alphabetically)
+  2.  Source code dump (~3560 lines) + Python/PyTorch versions + nvidia-smi
+  3.  ==== separator
+  4.  train_shards, val_tokens, model_params, gptq:reserving
+  5.  warmup_step: 1-20 (sparse: 1-6, 10, 20)
+  6.  loop_warmup:enabled + loop_warmup_step: 1-20
+  7.  Training loop (val + train lines, layer_loop:enabled at 35%)
+  8.  stopping_early: wallclock_cap
+  9.  peak memory allocated/reserved
+  10. ema:applying EMA weights
+  11. diagnostic pre-quantization post-ema val_loss/bpb/eval_time
+  12. Serialized model + Code size (uncompressed) + Code size (compressed)
+  13. GPTQ (Hessians + weight list with LQER + sizes)
+  14. diagnostic quantized val_loss/bpb/eval_time
+  15. ttt_lora compile warmup
+  16. beginning TTT eval timer + ttt_phased header
+  17. ttp prefix (gd:0) → ttpp → tttg chunks → ttpr
+  18. ttp suffix (gd:1, ~90 lines)
+  19. quantized_ttt_phased val_loss/bpb/eval_time
+  20. total_eval_time
