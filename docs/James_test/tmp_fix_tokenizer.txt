@@ -1,0 +1,55 @@
+# 1. Verify current tokenizer is wrong (should show standard pieces, no case markers)
+python3 -c "
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor()
+sp.Load('./data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model')
+print([sp.id_to_piece(i) for i in range(20)])
+"
+
+# 2. Delete bad file + manifest, re-download
+rm -f data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
+  MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
+  python3 data/cached_challenge_fineweb.py \
+    --variant sp8192_lossless_caps_caseops_v1_reserved \
+    --train-shards 80
+
+# 3. Verify it's now CaseOps (should show marker chars)
+python3 -c "
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor()
+sp.Load('./data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model')
+print([sp.id_to_piece(i) for i in range(20)])
+"
+
+# 4. Re-download sidecar file
+python3 -c "
+from huggingface_hub import hf_hub_download
+import shutil, os
+cached = hf_hub_download(
+    repo_id='romeerp/parameter-golf-caseops-v1',
+    filename='fineweb_val_bytes_000000.bin',
+    subfolder='datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved',
+    repo_type='dataset',
+)
+dest = 'data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin'
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+try:
+    os.link(os.path.realpath(cached), dest)
+except OSError:
+    shutil.copy2(os.path.realpath(cached), dest)
+print(f'Sidecar file saved to: {dest}')
+print(f'Size: {os.path.getsize(dest):,} bytes')
+"
+
+# 5. If tokenizer is STILL standard after step 2-3, the HF repo may not have
+#    a separate CaseOps tokenizer. In that case, switch to standard data:
+#    export CASEOPS_ENABLED=0
+#    export DATA_PATH=./data/datasets/fineweb10B_sp8192
+#    export TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe.model
+#    (This makes it P4b on standard data instead of CaseOps)
+
+# 6. Then rerun:
+# source ../runs/configs/p4b_caseops.env
+# RUN_ID=p4b_caseops_seed42 torchrun --standalone --nproc_per_node=8 train_gpt.py
