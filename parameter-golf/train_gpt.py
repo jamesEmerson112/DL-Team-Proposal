@@ -540,7 +540,7 @@ class ValidationData:
 # scanning the first ~2000 piece IDs is sufficient: a single hit is dispositive.
 # Empirically derived from romeerp/parameter-golf-caseops-v1's tokenizer.
 # Extend if a future CaseOps revision adds new markers.
-_CASEOPS_MARKER_CHARS = ("ᴀ", "ᴄ", "ᴇ", "ᴏ", "ɴ", "ᴡ", "◌")
+_CASEOPS_MARKER_CHARS = ("ᴀ", "ᴄ", "ᴇ", "ᴏ", "ɴ", "ᴡ", "◌", "\ue001", "\ue002", "\ue003", "\ue004")
 
 
 def tokenizer_looks_like_caseops(sp, scan_pieces=2000):
