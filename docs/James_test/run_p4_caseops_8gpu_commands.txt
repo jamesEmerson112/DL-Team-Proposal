@@ -1,18 +1,3 @@
-# P4_caseops — P4 hparams + CaseOps tokenizer — 8xH100
-# =====================================================
-# Purpose: Test P4's SOTA hparams on CaseOps data with correct byte accounting.
-# Hardware: 8xH100 SXM (RunPod)
-# Seeds: 42 first, then 1337 + 2025 if seed 42 passes.
-#
-# Reference numbers:
-#   C6 (standard SP8192):     1.0805 BPB (3-seed)
-#   P4 (standard SP8192):     TBD
-#   CaseOps token/byte ratio: ~0.3167 (sidecar, correct)
-
-# =============================================================================
-# STEP 0: Environment setup
-# =============================================================================
-
 git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
 cd DL-Team-Proposal
 git fetch origin
@@ -22,21 +7,16 @@ git pull origin James-experiment
 cd parameter-golf
 python3 -m pip install --upgrade pip
 pip install -r requirements.txt
+pip install --upgrade torch
 pip install --no-cache-dir "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
 
-# =============================================================================
-# STEP 1: Download CaseOps data (token shards + tokenizer)
-# =============================================================================
+rm -f data/manifest.json
 
 MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
   MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
   python3 data/cached_challenge_fineweb.py \
     --variant sp8192_lossless_caps_caseops_v1_reserved \
     --train-shards 80
-
-# =============================================================================
-# STEP 2: Download sidecar file (not fetched by the download script)
-# =============================================================================
 
 python3 -c "
 from huggingface_hub import hf_hub_download
@@ -58,13 +38,7 @@ print(f'Sidecar file saved to: {dest}')
 print(f'Size: {os.path.getsize(dest):,} bytes')
 "
 
-# =============================================================================
-# STEP 3: Preflight checks
-# =============================================================================
-
 CASEOPS_DATA_DIR=./data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
-
-# Fix HF cache hard-link permissions
 chmod +r ${CASEOPS_DATA_DIR}/fineweb_train_*.bin
 chmod +r ${CASEOPS_DATA_DIR}/fineweb_val_*.bin
 
@@ -81,76 +55,47 @@ ls data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model 2>/d
 echo "GPUs:"
 python3 -c "import torch; print(torch.cuda.device_count())"
 echo "FA3:"
-python3 -c "import flash_attn_3_cuda" 2>/dev/null && echo "OK" || echo "MISSING"
+python3 -c "import flash_attn_3; print('OK')" 2>/dev/null || echo "MISSING"
 
-# Expected: 1 val shard, 1 sidecar, 80 train shards, tokenizer OK, 8 GPUs, FA3 OK
-
-# =============================================================================
-# STEP 4: Run seed 42
-# =============================================================================
-
-cd /workspace/DL-Team-Proposal/parameter-golf
-source ../runs/configs/p4_caseops.env
-torchrun --standalone --nproc_per_node=8 train_gpt.py
-
-# =============================================================================
-# STEP 5: Validate seed 42
-# =============================================================================
-
-# 5a. Confirm CaseOps is enabled and byte accounting is correct:
-grep "caseops_enabled" logs/p4_caseops.txt
-# Expected: True
-
-# 5b. Confirm gated attention fired:
-grep "gated_attn_enabled" logs/p4_caseops.txt
-# Expected: True
-
-# 5c. Confirm token/byte ratio is CaseOps-sidecar (~0.3167):
+# --- Tokenizer fingerprint check (detect CaseOps contamination at standard path) ---
 python3 -c "
-import math, re
-with open('logs/p4_caseops.txt') as f:
-    text = f.read()
-m = re.findall(r'quantized_ttt_phased val_loss:([\d.]+) val_bpb:([\d.]+)', text)
-if not m:
-    print('ERROR: no TTT eval line in log'); raise SystemExit(1)
-val_loss, val_bpb = map(float, m[-1])
-ratio = val_bpb * math.log(2) / val_loss
-print(f'val_loss={val_loss:.4f}  val_bpb={val_bpb:.4f}  ratio={ratio:.4f}')
-print(f'CaseOps sidecar expected ratio: ~0.317')
-if abs(ratio - 0.317) < 0.010:
-    print('OK - ratio matches CaseOps sidecar byte counting.')
-elif abs(ratio - 0.268) < 0.010:
-    print('WARNING - ratio matches STANDARD, not CaseOps! Check CASEOPS_ENABLED.')
-elif abs(ratio - 0.291) < 0.010:
-    print('WARNING - ratio matches CaseOps LUT (inflated)! Sidecar not loaded.')
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor()
+sp.Load('data/tokenizers/fineweb_8192_bpe.model')
+vocab = [sp.IdToPiece(i) for i in range(sp.GetPieceSize())]
+caseops_markers = [p for p in vocab if any(c in p for c in '\u2581\u0300\u0301\u0302')]
+if any('\u0300' in p or '\u0301' in p or '\u0302' in p for p in vocab):
+    print('WARNING: standard tokenizer has CaseOps marker chars — DATA MAY BE CONTAMINATED')
+    print('This pod may have symlinked CaseOps data to standard paths.')
 else:
-    print(f'UNEXPECTED ratio {ratio:.4f} - investigate.')
+    print('OK: standard tokenizer is clean (no CaseOps markers)')
 "
 
-# 5d. Confirm under-budget:
+source ../runs/configs/p4_caseops.env
+
+# --- Config verification (abort if source failed) ---
+echo "=== Config Verification ==="
+if [ -z "${CASEOPS_ENABLED:-}" ]; then
+  echo "FATAL: CASEOPS_ENABLED is unset — source failed (file missing on pod?)"
+  echo "Did you push runs/configs/p4_caseops.env to the remote?"
+  exit 1
+fi
+echo "CASEOPS_ENABLED    = ${CASEOPS_ENABLED}     (expect: 1)"
+echo "GATED_ATTN_ENABLED = ${GATED_ATTN_ENABLED}  (expect: 1)"
+echo "EMBED_BITS         = ${EMBED_BITS}           (expect: 7)"
+echo "BETA2              = ${BETA2}                (expect: 0.99)"
+echo "WARMDOWN_FRAC      = ${WARMDOWN_FRAC}        (expect: 0.85)"
+echo "MIN_LR             = ${MIN_LR}               (expect: 0.10)"
+echo "MATRIX_CLIP_SIGMAS = ${MATRIX_CLIP_SIGMAS}   (expect: 12.5)"
+echo "==========================="
+
+RUN_ID=p4_caseops_seed42 torchrun --standalone --nproc_per_node=8 train_gpt.py
+
 ls -la final_model.int6.ptz
-# Expected: < 16,000,000 bytes (16 MB)
 
-# Decision gate:
-#   - Budget OK + ratio ~0.317 + BPB reasonable: proceed to STEP 6.
-#   - Budget OVER: tighten EMBED_BITS or MATRIX_CLIP_SIGMAS, rerun seed 42.
-#   - Ratio off: STOP and investigate.
+RUN_ID=p4_caseops_seed1337 SEED=1337 torchrun --standalone --nproc_per_node=8 train_gpt.py
 
-# =============================================================================
-# STEP 6: Run seeds 1337 and 2025 (only if seed 42 passed)
-# =============================================================================
-
-mv logs/p4_caseops.txt logs/p4_caseops_seed42.txt
-
-SEED=1337 torchrun --standalone --nproc_per_node=8 train_gpt.py
-mv logs/p4_caseops.txt logs/p4_caseops_seed1337.txt
-
-SEED=2025 torchrun --standalone --nproc_per_node=8 train_gpt.py
-mv logs/p4_caseops.txt logs/p4_caseops_seed2025.txt
-
-# =============================================================================
-# STEP 7: Compute 3-seed mean
-# =============================================================================
+RUN_ID=p4_caseops_seed2025 SEED=2025 torchrun --standalone --nproc_per_node=8 train_gpt.py
 
 python3 -c "
 import re, statistics
