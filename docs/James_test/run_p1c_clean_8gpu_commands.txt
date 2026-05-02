@@ -1,0 +1,200 @@
+# P1c Clean Rerun (post-bug-fix) — 8xH100
+# =========================================
+# Purpose: Run P1c with the silent-inflation bug fix in place.
+#   - Code change: parameter-golf/train_gpt.py CASEOPS_ENABLED now defaults
+#     to "auto" + adds tokenizer fingerprint guard. See Section 3a in
+#     docs/James_test/p1a_vs_p3_comparison.txt.
+#   - Pod-side fix: purge any leftover CaseOps tokenizer file at the
+#     standard path + redownload from kevclark/parameter-golf.
+#
+# Hardware: 8xH100 SXM (RunPod)
+# Estimated time: ~15 min setup + 10 min train + 7 min eval per seed
+# Seeds: 42 first (validation), then 1337 and 2025 if seed 42 looks clean.
+# Cost: ~$5-10 for 1 seed, ~$15-30 for 3 seeds.
+#
+# Reference numbers:
+#   C6 (target to compare against): 1.0805 BPB (3-seed, leaderboard)
+#   P1a (best non-budget):          1.0769 BPB (over budget at 16.35 MB)
+#   Projected P1c clean:            ~1.077-1.085 BPB (P1a with tighter clip)
+#   Standard SP8192 token/byte:     ratio 0.268 (sanity check)
+
+# =============================================================================
+# STEP 0: Environment setup
+# =============================================================================
+
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment   # MUST include the CASEOPS_ENABLED=auto fix
+
+cd parameter-golf
+python3 -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install huggingface_hub brotli
+pip install --upgrade torch
+pip install --no-cache-dir "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# =============================================================================
+# STEP 1: PURGE any CaseOps tokenizer leftover + download canonical SP8192
+# =============================================================================
+# This is the critical step that previous P1c attempts skipped. The pod may
+# have a CaseOps tokenizer hardlinked at the standard path from a prior P3
+# setup; delete it so the redownload writes the canonical file.
+
+rm -f data/tokenizers/fineweb_8192_bpe.model
+rm -f data/manifest.json
+
+MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 \
+  data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+# Verify no CaseOps symlinks anywhere in the data tree:
+ls -la data/datasets/ | grep fineweb10B_sp8192
+ls -la data/tokenizers/ | grep fineweb_8192
+# Both entries should be REAL files / directories. NO "->" arrow indicating
+# a symlink. If you see a symlink, rm and re-download.
+
+# =============================================================================
+# STEP 2: Sanity-check the tokenizer is canonical (NOT CaseOps)
+# =============================================================================
+
+python3 -c "
+import sentencepiece as spm
+sp = spm.SentencePieceProcessor()
+sp.Load('./data/tokenizers/fineweb_8192_bpe.model')
+print('vocab_size:', sp.vocab_size())
+print('first 30 pieces:', [sp.id_to_piece(i) for i in range(30)])
+# Standard SP8192: NO Unicode small-cap markers (no ᴀ/ᴄ/ᴇ/ᴏ/ɴ/ᴡ/◌).
+# CaseOps would show pieces like '<ᴀ>' or '◌' in the low-ID range.
+"
+
+# Use the new fingerprint helper to confirm:
+python3 -c "
+import sys
+sys.path.insert(0, '.')
+import sentencepiece as spm
+from train_gpt import tokenizer_looks_like_caseops
+sp = spm.SentencePieceProcessor()
+sp.Load('./data/tokenizers/fineweb_8192_bpe.model')
+result = tokenizer_looks_like_caseops(sp)
+print('tokenizer_looks_like_caseops:', result)
+assert result is False, 'STILL CaseOps tokenizer at standard path. Repeat STEP 1.'
+print('OK — tokenizer is canonical.')
+"
+
+# =============================================================================
+# STEP 3: Run P1c — seed 42 (validation pass)
+# =============================================================================
+# Why one seed first: if size > 16 MB or BPB looks anomalous, fix the config
+# before paying for two more seeds.
+
+cd /workspace/DL-Team-Proposal/parameter-golf  # adjust if your pod path differs
+source ../runs/configs/p4_clip12.env
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+# =============================================================================
+# STEP 4: Validate seed 42 result before running more seeds
+# =============================================================================
+
+# 4a. Confirm the byte source is correct:
+grep "tokenizer_fingerprint:" logs/p4_clip12.txt
+grep "byte_source:" logs/p4_clip12.txt
+# Expected:
+#   tokenizer_fingerprint: standard
+#   byte_source: lut
+# If you see "caseops" or "sidecar", abort — the fix didn't take effect.
+
+# 4b. Confirm the token/byte ratio is in the standard SP8192 range:
+python3 -c "
+import math, re
+with open('logs/p4_clip12.txt') as f:
+    text = f.read()
+# Last quantized_ttt_phased line:
+m = re.findall(r'quantized_ttt_phased val_loss:([\d.]+) val_bpb:([\d.]+)', text)
+if not m:
+    print('ERROR: no TTT eval line in log — run probably crashed.'); raise SystemExit(1)
+val_loss, val_bpb = map(float, m[-1])
+ratio = val_bpb * math.log(2) / val_loss
+print(f'val_loss={val_loss:.4f}  val_bpb={val_bpb:.4f}  ratio={ratio:.4f}')
+print(f'Standard SP8192 expected ratio: ~0.268')
+if abs(ratio - 0.268) < 0.005:
+    print('OK — ratio is canonical, byte counting is correct.')
+else:
+    print(f'WARNING — ratio {ratio:.4f} is OFF (expected ~0.268). Investigate.')
+"
+
+# 4c. Confirm under-budget:
+ls -la final_model.int6.ptz
+# Expected: < 16,000,000 bytes (16 MB).
+# If over: try EMBED_BITS=6 (~-1 MB, +0.013 BPB cost) before next seed.
+
+# 4d. Confirm the gated attention actually fired:
+grep "gated_attn_enabled:" logs/p4_clip12.txt
+# Expected: gated_attn_enabled: True
+
+# Decision gate:
+#   - Budget OK + ratio ~0.268 + BPB < 1.090: proceed to STEP 5 (more seeds).
+#   - Budget OVER: tighten EMBED_BITS or MATRIX_CLIP_SIGMAS, rerun seed 42.
+#   - Ratio off or BPB > 1.10: STOP — investigate config or pod state.
+
+# =============================================================================
+# STEP 5: Run seeds 1337 and 2025 (only if seed 42 passed STEP 4)
+# =============================================================================
+
+# Save seed 42 log so it isn't overwritten:
+mv logs/p4_clip12.txt logs/p4_clip12_seed42.txt
+
+SEED=1337 torchrun --standalone --nproc_per_node=8 train_gpt.py
+mv logs/p4_clip12.txt logs/p4_clip12_seed1337.txt
+
+SEED=2025 torchrun --standalone --nproc_per_node=8 train_gpt.py
+mv logs/p4_clip12.txt logs/p4_clip12_seed2025.txt
+
+# =============================================================================
+# STEP 6: Compute 3-seed mean and compare to C6
+# =============================================================================
+
+python3 -c "
+import re, statistics
+seeds = [42, 1337, 2025]
+bpbs = []
+for s in seeds:
+    with open(f'logs/p4_clip12_seed{s}.txt') as f:
+        text = f.read()
+    m = re.findall(r'quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)', text)
+    bpbs.append(float(m[-1]))
+    print(f'seed {s}: val_bpb = {bpbs[-1]:.4f}')
+mean = statistics.mean(bpbs)
+std = statistics.pstdev(bpbs)
+print(f'Mean: {mean:.4f} (std {std:.4f})')
+print(f'C6 reference: 1.0805 (target to beat)')
+delta = mean - 1.0805
+if delta < 0:
+    print(f'P1c BEATS C6 by {-delta:.4f} BPB')
+else:
+    print(f'P1c WORSE than C6 by {delta:.4f} BPB')
+"
+
+# =============================================================================
+# NOTES
+# =============================================================================
+#
+# What the new code guards against (anything you might forget):
+#   - Leftover CaseOps tokenizer at standard path -> FileNotFoundError before
+#     any compute (auto mode detects fingerprint, looks for sidecar, fails).
+#   - CASEOPS_ENABLED=0 + CaseOps tokenizer -> ValueError ("refusing to
+#     silently inflate BPB").
+#   - CASEOPS_ENABLED=1 + standard tokenizer -> ValueError (loud mismatch).
+#   - CASEOPS_ENABLED=1 + missing sidecar -> FileNotFoundError.
+#
+# If any of those errors fires, fix the pod state per the message and rerun.
+# Do NOT try to bypass them — they exist because we already burned $X+ on
+# silently-inflated runs (P3 retracted, P1c original/reset both bugged).
+#
+# Cross-references:
+#   - parameter-golf/train_gpt.py:388-393   (CASEOPS_ENABLED parser)
+#   - parameter-golf/train_gpt.py:481-534   (byte-source resolver)
+#   - parameter-golf/train_gpt.py:537-565   (fingerprint helper)
+#   - docs/James_test/p1a_vs_p3_comparison.txt Section 3a (bug history)
+#   - docs/James_test/run_p3_rerun_correct_bytes.txt (CaseOps run pattern)
+#   - runs/configs/p4_clip12.env (P1c config)
