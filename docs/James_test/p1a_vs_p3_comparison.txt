@@ -125,6 +125,145 @@ Additional observations:
   - The sub-1.0 BPB was an artifact. Corrected TTT BPB ≈ 1.087.
 
 ────────────────────────────────────────────────────────────────────────────────
+3a. CaseOps Tokenizer Silent Inflation Bug (Pattern Across P3 + P1c)
+────────────────────────────────────────────────────────────────────────────────
+
+Both P3 (original) and P1c hit the SAME upstream-code design flaw. P3-fix
+proved sidecar bytes are correct; P1c "reset pod" attempt proved purging the
+data symlink isn't enough. The bug is in train_gpt.py (forked from PR #1851)
+and triggers whenever ALL of:
+
+  (a) A CaseOps tokenizer file sits at the standard tokenizer path on disk
+      (typically a hardlink/copy leftover from a prior CaseOps run), AND
+  (b) CASEOPS_ENABLED=0 (the default), AND
+  (c) The training pipeline runs to completion (no crash before eval).
+
+────────────────────────────────────────────────────────────────────────────────
+Mechanism (cite parameter-golf/train_gpt.py line numbers):
+────────────────────────────────────────────────────────────────────────────────
+
+  1. Line 380:
+       caseops_enabled = bool(int(os.environ.get("CASEOPS_ENABLED", "0")))
+     → defaults to False on a missing env var.
+
+  2. Lines 397-408: path resolution selects the STANDARD datasets_dir +
+     tokenizer_path on the False branch.
+     → BUT the file at tokenizer_path may be CaseOps content (silent leftover).
+
+  3. Line 452:
+       self.sp = spm.SentencePieceProcessor(model_file=h.tokenizer_path)
+     → loads whatever bytes are at that path. No fingerprint check.
+
+  4. Line 462:
+       (self.base_bytes_lut, ...) = build_sentencepiece_luts(self.sp, ...)
+     → LUT (look-up table) built from loaded pieces. CaseOps pieces include
+     small-cap markers (ᴀ ᴄ ᴇ ᴏ ɴ ᴡ ◌) whose UTF-8 encoding adds 3-4 bytes
+     per marker'd piece.
+
+  5. Line 478: vocab-size assert (8192 == 8192) passes for either tokenizer.
+     → No alarm bell.
+
+  6. Lines 2587-2602 (eval_val): val_data.caseops_enabled is False →
+       token_bytes = val_data.base_bytes_lut[tgt_ids]
+       val_byte_count += token_bytes.sum()
+     → INFLATED denominator from CaseOps-poisoned LUT.
+
+  7. BPB formula:
+       val_bpb = val_loss / ln(2) × (val_tokens / val_bytes)
+     Inflated bytes → BPB looks ~9% too good.
+
+────────────────────────────────────────────────────────────────────────────────
+Diagnostic (token/byte ratio sanity check):
+────────────────────────────────────────────────────────────────────────────────
+
+  ratio = val_bpb × ln(2) / val_loss
+
+  Standard SP8192 LUT:          ratio ≈ 0.268   ← canonical leaderboard
+  CaseOps tokenizer LUT (BUG):  ratio ≈ 0.245   ← ~9% inflation
+  CaseOps sidecar (canonical):  ratio ≈ 0.317   ← raw text bytes
+
+  Always check this ratio on a fresh pod. If not within ±0.005 of the expected
+  value for your config, something is contaminated.
+
+────────────────────────────────────────────────────────────────────────────────
+Empirical evidence (three runs, same root cause):
+────────────────────────────────────────────────────────────────────────────────
+
+  P3 original (Session 19):
+    Pod with CaseOps symlinks. CASEOPS_ENABLED=0. Reported 1.0066 BPB.
+    ratio: 1.0066 × ln(2) / 2.4012 = 0.291  ← bugged LUT inflation
+    Rerun with CASEOPS_ENABLED=1 + sidecar: 1.0972 BPB. Retracted PR #2071.
+
+  P1c original (logs/p4_clip12.txt):
+    Pod with CaseOps symlinks. CASEOPS_ENABLED=0. Reported 0.9978 BPB.
+    ratio: 0.9978 × ln(2) / 2.3789 = 0.291  ← same bugged LUT inflation
+
+  P1c reset (PR #2071 attachment p4_clip12_reset.txt):
+    Pod after "removing the data symlink". CASEOPS_ENABLED=0. Eval crashed
+    before TTT (missing python-minifier). Reported 1.0074 pre-Q post-EMA.
+    ratio: 1.0074 × ln(2) / 2.8511 = 0.245  ← STILL bugged: tokenizer file
+    was not refreshed even though the data dir was.
+
+────────────────────────────────────────────────────────────────────────────────
+Why "reset the pod" didn't fix it:
+────────────────────────────────────────────────────────────────────────────────
+
+Resetting the data symlink at data/datasets/fineweb10B_sp8192 reverts the
+tokenized data shards to standard. But the TOKENIZER file at
+data/tokenizers/fineweb_8192_bpe.model is a SEPARATE artifact. If the pod
+setup created it via copy or hard-link from a CaseOps tokenizer model (likely
+from the romeerp/parameter-golf-caseops-v1 HF cache hard-link chain), it
+persists across data-only resets. The vocab-size assertion at line 478 passes
+(both variants are 8192), so nothing complains.
+
+────────────────────────────────────────────────────────────────────────────────
+Operational fix (per-run, on a stale pod):
+────────────────────────────────────────────────────────────────────────────────
+
+  rm -f data/tokenizers/fineweb_8192_bpe.model
+  rm -f data/manifest.json
+  MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 \
+    data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+  # Verify (no case-marker pieces in first 30):
+  python3 -c "import sentencepiece as spm; \
+    sp = spm.SentencePieceProcessor(); \
+    sp.Load('./data/tokenizers/fineweb_8192_bpe.model'); \
+    print([sp.id_to_piece(i) for i in range(30)])"
+
+  # Then source p4_clip12.env and torchrun.
+
+────────────────────────────────────────────────────────────────────────────────
+Code-level fix (committed in parameter-golf/train_gpt.py):
+────────────────────────────────────────────────────────────────────────────────
+
+CASEOPS_ENABLED now accepts "0" | "1" | "auto" (default: "auto").
+
+  - "auto" (new default): standard data paths, but ValidationData.__init__
+    runs a tokenizer-fingerprint check at construction time. If the tokenizer
+    pieces contain CaseOps markers AND a sidecar file is present, auto-
+    upgrades to sidecar byte counting. If markers present but no sidecar, the
+    code REFUSES TO RUN (loud FileNotFoundError) rather than silently
+    inflating BPB. Standard tokenizer + auto = LUT path, identical to today.
+
+  - "0": as before, but now also errors loudly if the loaded tokenizer
+    fingerprint says CaseOps (no more silent inflation).
+
+  - "1": as before — explicitly request CaseOps data paths + sidecar. Also
+    errors if the loaded tokenizer fingerprint says NOT CaseOps (loud
+    mismatch instead of confusing downstream errors).
+
+  - Two new log lines fire at ValidationData construction:
+      tokenizer_fingerprint: <standard|caseops>
+      byte_source: <lut|sidecar>
+    grep these in any future log to confirm the byte source is what you
+    expect.
+
+  - The marker list (_CASEOPS_MARKER_CHARS in train_gpt.py) is empirically
+    derived from romeerp/parameter-golf-caseops-v1's tokenizer pieces.
+    If a future CaseOps revision changes markers, extend the constant.
+
+────────────────────────────────────────────────────────────────────────────────
 3. P3 Byte Accounting Error (Root Cause)
 ────────────────────────────────────────────────────────────────────────────────
 
