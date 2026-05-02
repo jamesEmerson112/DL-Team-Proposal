@@ -2,6 +2,8 @@ P1a vs P3 Comparison — Post-Retraction Analysis
 =================================================
 Summary: P1c achieved 0.9978 BPB (sub-1.0!) but has THREE bugs: gate OFF, CaseOps byte
 inflation, and CaseOps training data via symlinks. Corrected BPB ≈ 1.087 (worse than C6).
+P4_caseops (56425ee1) is INVALID: source failed → ran PR #1851 defaults + CaseOps byte
+contamination. Reported 0.9756 BPB, corrected ≈ 1.069. Must rerun with config pushed to pod.
 P1a (1.0769) is best BPB without bugs. C6 (1.0805) remains best legal submittable run.
 
 Run Descriptions:
@@ -15,55 +17,69 @@ Run Descriptions:
           4× smaller batch → ~3× more steps, but noisier gradients.
 
 
-● Key findings from the log analysis:
+● Key findings from run 56425ee1 (P4_caseops — INVALID):
+
+  ROOT CAUSE: `source ../runs/configs/p4_caseops.env` silently failed (file not pushed
+  to remote). Bash continued with ALL PR #1851 defaults. No SOTA hparams applied.
+
+  Config that ACTUALLY ran (vs planned):
+    beta2=0.95 (plan: 0.99), warmdown_frac=0.75 (plan: 0.85), min_lr=0.0 (plan: 0.10),
+    caseops_enabled=False (plan: 1), gated_attn_enabled=False (plan: 1),
+    embed_bits=8 (plan: 7), embed_clip_sigmas=20.0 (plan: 14.0),
+    matrix_clip_sigmas=12.85 (plan: 12.5), gptq_reserve_seconds=4.0 (plan: 0.5),
+    muon_momentum=0.97 (plan: 0.99), qk_gain_init=5.0 (plan: 5.25)
 
   The byte ratio is WRONG again. Computing BPB × ln(2) / val_loss:
-  - P4: 1.00741 × 0.6931 / 2.8511 = **0.2449**
+  - P4: 0.97560 × 0.6931 / 2.7612 = **0.2449**
   - C6 (standard): 0.2683
 
-  That's ~9.6% inflation — the same CaseOps-like deflation we saw in P3/P1c. Despite removing the symlink on the data directory, the tokenizer might still be
-   CaseOps, or PR #1851's code computes bytes differently.
+  That's ~9.6% inflation — CaseOps tokenizer contamination at standard path. Despite
+  CASEOPS_ENABLED=False, the tokenizer file was CaseOps (same bug as P3/P1c).
 
   The val_loss tells the real story:
-  - P4 val_loss: 2.8535 (worse)
-  - C6 val_loss: ~2.8092 (better)
+  - P4 TTT val_loss: 2.7612 (slightly better than C6)
+  - C6 TTT val_loss: ~2.8092
 
-  Normalized to C6's byte ratio: P4 true BPB ≈ 1.104 — worse than C6 (1.0805) by +0.024.
+  Normalized to C6's byte ratio: P4 corrected BPB ≈ 1.069 — better than C6 (1.0805)
+  by ~0.012, BUT this used PR #1851 defaults (no gated attn, no SOTA hparams), so
+  the comparison is meaningless for evaluating P4_caseops config.
 
-  Why worse? P4 only got 2,542 steps vs C6's ~4,467. The layer loop activation at step 1442 cut throughput by ~45% (8.2M → 3.8M tok/s), so P4 saw far fewer
-  tokens in the same 10-minute window.
+  Steps: 5,045 (more than C6's ~4,467). Layer loop activated at step 4,416 (frac=0.35),
+  cutting throughput from ~8.4M to ~6.7M tok/s.
 
-  Action items:
-  1. Check if the tokenizer is still CaseOps: ls -la data/ — look for fineweb_8192_bpe.model symlink
-  2. Install python-minifier and rerun — but the result will likely be worse than C6
-  3. The deeper issue: SOTA hparams (WARMDOWN=0.85, MIN_LR=0.10) may need more steps to pay off, and the throughput loss from layer loop prevents that
+  Size: 16,931,143 bytes (16.14 MB) — OVER BUDGET (embed_bits=8 instead of 7).
+
+  This run is DOUBLY INVALID: wrong config + CaseOps byte contamination. Must rerun
+  with correct config pushed to remote + tokenizer fingerprint check.
 
 ────────────────────────────────────────────────────────────────────────────────
 1. Side-by-Side Config
 ────────────────────────────────────────────────────────────────────────────────
 
-| Parameter             | C6 (reference)   | P1a               | P1c (running)          | P3 (corrected)         |
-|-----------------------|------------------|--------------------|------------------------|------------------------|
-| Base stack            | @bigbag PR #1851 | @bigbag PR #1851   | @bigbag PR #1851       | @bigbag PR #1851       |
-| GATED_ATTN            | headwise         | headwise           | headwise               | headwise               |
-| EMA_DECAY             | 0.9965 (default) | 0.9965 (default)   | 0.9965 (default)       | 0.990                  |
-| TRAIN_BATCH_TOKENS    | 786432 (default) | 786432 (default)   | 786432 (default)       | 196608 (small batch)   |
-| WARMDOWN_FRAC         | 0.72             | 0.85 ★             | 0.85 ★                 | 0.75 (PR #1851 default)|
-| MIN_LR                | 0.0              | 0.10 ★             | 0.10 ★                 | 0.0                    |
-| MATRIX_CLIP_SIGMAS    | 12.85            | 11.5 ★             | **12.0** ★★            | 12.85                  |
-| EMBED_CLIP_SIGMAS     | 15.0             | 14.0 ★             | 14.0 ★                 | 15.0                   |
-| BETA2                 | 0.95             | 0.99 ★             | 0.99 ★                 | 0.95                   |
-| GPTQ_RESERVE_SECONDS  | 12               | 0.5 ★              | 0.5 ★                  | 4                      |
-| EMBED_BITS            | 7                | 7                  | 7                      | 6                      |
-| CASEOPS_ENABLED       | N/A              | N/A                | N/A                    | 1 (corrected)          |
-| MUON_MOMENTUM         | 0.99             | 0.99               | 0.99                   | 0.97 (PR #1851 default)|
-| QK_GAIN_INIT          | 5.25             | 5.25               | 5.25                   | 5.0                    |
-| Steps (8×H100)        | ~4,467           | 4,587              | 3,056                  | ~12,140                |
-| Budget?               | Yes (15.70 MB)   | NO (16.35 MB)      | NO (16.69 MB)          | Yes (15.98 MB)         |
+| Parameter             | C6 (reference)   | P1c (running)          | P4_caseops (INVALID)   | P3 (corrected)         |
+|-----------------------|------------------|-----------------------|------------------------|------------------------|
+| Base stack            | @bigbag PR #1851 | @bigbag PR #1851      | @bigbag PR #1851       | @bigbag PR #1851       |
+| GATED_ATTN            | headwise         | headwise              | headwise               | headwise               |
+| EMA_DECAY             | 0.9965 (default) | 0.9965 (default)      | 0.9965 (default)       | 0.990                  |
+| TRAIN_BATCH_TOKENS    | 786432 (default) | 786432 (default)      | 786432 (default)       | 196608 (small batch)   |
+| WARMDOWN_FRAC         | 0.72             | 0.85 ★                | 0.85 ★                 | 0.75 (PR #1851 default)|
+| MIN_LR                | 0.0              | 0.10 ★                | 0.10 ★                 | 0.0                    |
+| MATRIX_CLIP_SIGMAS    | 12.85            | **12.0** ★★           | 12.5 ★★                | 12.85                  |
+| EMBED_CLIP_SIGMAS     | 15.0             | 14.0 ★                | 14.0 ★                 | 15.0                   |
+| BETA2                 | 0.95             | 0.99 ★                | 0.99 ★                 | 0.95                   |
+| GPTQ_RESERVE_SECONDS  | 12               | 0.5 ★                 | 0.5 ★                  | 4                      |
+| EMBED_BITS            | 7                | 7                     | 7                      | 6                      |
+| CASEOPS_ENABLED       | N/A              | N/A                   | 1 (intentional)        | 1 (corrected)          |
+| MUON_MOMENTUM         | 0.99             | 0.99                  | 0.99                   | 0.97 (PR #1851 default)|
+| QK_GAIN_INIT          | 5.25             | 5.25                  | 5.25                   | 5.0                    |
+| Steps (8×H100)        | ~4,467           | 3,056                 | 5,045 (wrong config)   | ~12,140                |
+| Budget?               | Yes (15.70 MB)   | NO (16.69 MB)         | NO (16.14 MB, emb8)    | Yes (15.98 MB)         |
 
 ★ = SOTA hparam override from PR #1855 (codemath3000)
 
-Key difference: P1a = optimizer/schedule tuning (6 env overrides from SOTA).
+Key difference: P1c = P1a SOTA hparams on standard data (had 3 bugs).
+               P4_caseops = INTENDED to be P1c hparams + CaseOps + sidecar bytes.
+                            ACTUALLY ran PR #1851 defaults (source failed, file not on pod).
                P3 = training dynamics changes (EMA + small batch + emb6).
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -74,14 +90,18 @@ Key difference: P1a = optimizer/schedule tuning (6 env overrides from SOTA).
 |---------|---------|----------|--------|-----------|---------|------------|
 | **P1c** | **0.9978**| 2.3912  | 3,056  | 16.69 MB  | NO      | GATE+BYTE BUG |
 | P1a     | 1.0769  | 2.7816   | 4,587  | 16.35 MB  | NO      | Best BPB   |
+| P4_co   | 0.9756† | 2.7612   | 5,045  | 16.14 MB  | NO      | INVALID (wrong config + CaseOps bytes) |
 | P3-fix  | 1.0975* | 2.4012   | 12,140 | 15.98 MB  | Yes     | CORRECTED  |
 | C6      | 1.0805  | 2.7910   | 4,467  | 15.70 MB  | Yes     | SUBMITTED  |
 | ext SOTA| 1.0611  | —        | ~4,930 | ~15.90 MB | Yes     | PR #1855   |
 
 *P3-fix = 2-seed mean (seed42: 1.09724, seed1337: 1.09779)
+†P4_co = CaseOps-inflated BPB (ratio 0.2449 vs standard 0.2683). Corrected ≈ 1.069.
+         Ran PR #1851 defaults (source failed). Log: 56425ee1-5461-4a73-9216-3c5ff401da55.txt
 
 Delta from C6:  P1a = −0.0036 (better)    P3-fix = +0.0170 (worse)
                 P1c = +0.0065 (corrected — 3 bugs: gate OFF + byte inflation + CaseOps data)
+                P4_co = −0.012 (corrected, but MEANINGLESS — wrong config ran)
 
 ────────────────────────────────────────────────────────────────────────────────
 2a. P1c Bugs Found
