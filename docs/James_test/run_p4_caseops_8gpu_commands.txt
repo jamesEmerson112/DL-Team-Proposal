@@ -1,0 +1,174 @@
+# P4_caseops — P4 hparams + CaseOps tokenizer — 8xH100
+# =====================================================
+# Purpose: Test P4's SOTA hparams on CaseOps data with correct byte accounting.
+# Hardware: 8xH100 SXM (RunPod)
+# Seeds: 42 first, then 1337 + 2025 if seed 42 passes.
+#
+# Reference numbers:
+#   C6 (standard SP8192):     1.0805 BPB (3-seed)
+#   P4 (standard SP8192):     TBD
+#   CaseOps token/byte ratio: ~0.3167 (sidecar, correct)
+
+# =============================================================================
+# STEP 0: Environment setup
+# =============================================================================
+
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal
+git fetch origin
+git checkout James-experiment
+git pull origin James-experiment
+
+cd parameter-golf
+python3 -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install --no-cache-dir "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+# =============================================================================
+# STEP 1: Download CaseOps data (token shards + tokenizer)
+# =============================================================================
+
+MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 \
+  MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets \
+  python3 data/cached_challenge_fineweb.py \
+    --variant sp8192_lossless_caps_caseops_v1_reserved \
+    --train-shards 80
+
+# =============================================================================
+# STEP 2: Download sidecar file (not fetched by the download script)
+# =============================================================================
+
+python3 -c "
+from huggingface_hub import hf_hub_download
+import shutil, os
+
+cached = hf_hub_download(
+    repo_id='romeerp/parameter-golf-caseops-v1',
+    filename='fineweb_val_bytes_000000.bin',
+    subfolder='datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved',
+    repo_type='dataset',
+)
+dest = 'data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin'
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+try:
+    os.link(os.path.realpath(cached), dest)
+except OSError:
+    shutil.copy2(os.path.realpath(cached), dest)
+print(f'Sidecar file saved to: {dest}')
+print(f'Size: {os.path.getsize(dest):,} bytes')
+"
+
+# =============================================================================
+# STEP 3: Preflight checks
+# =============================================================================
+
+CASEOPS_DATA_DIR=./data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
+
+# Fix HF cache hard-link permissions
+chmod +r ${CASEOPS_DATA_DIR}/fineweb_train_*.bin
+chmod +r ${CASEOPS_DATA_DIR}/fineweb_val_*.bin
+
+echo "=== Preflight Check ==="
+echo "Token shards (val):"
+ls ${CASEOPS_DATA_DIR}/fineweb_val_*.bin 2>/dev/null | grep -v bytes | wc -l
+echo "Sidecar files:"
+ls ${CASEOPS_DATA_DIR}/fineweb_val_bytes_*.bin 2>/dev/null | wc -l
+echo "Train shards:"
+ls ${CASEOPS_DATA_DIR}/fineweb_train_*.bin 2>/dev/null | wc -l
+echo "Tokenizer:"
+ls data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model 2>/dev/null \
+  && echo "OK" || echo "MISSING"
+echo "GPUs:"
+python3 -c "import torch; print(torch.cuda.device_count())"
+echo "FA3:"
+python3 -c "import flash_attn_3_cuda" 2>/dev/null && echo "OK" || echo "MISSING"
+
+# Expected: 1 val shard, 1 sidecar, 80 train shards, tokenizer OK, 8 GPUs, FA3 OK
+
+# =============================================================================
+# STEP 4: Run seed 42
+# =============================================================================
+
+cd /workspace/DL-Team-Proposal/parameter-golf
+source ../runs/configs/p4_caseops.env
+torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+# =============================================================================
+# STEP 5: Validate seed 42
+# =============================================================================
+
+# 5a. Confirm CaseOps is enabled and byte accounting is correct:
+grep "caseops_enabled" logs/p4_caseops.txt
+# Expected: True
+
+# 5b. Confirm gated attention fired:
+grep "gated_attn_enabled" logs/p4_caseops.txt
+# Expected: True
+
+# 5c. Confirm token/byte ratio is CaseOps-sidecar (~0.3167):
+python3 -c "
+import math, re
+with open('logs/p4_caseops.txt') as f:
+    text = f.read()
+m = re.findall(r'quantized_ttt_phased val_loss:([\d.]+) val_bpb:([\d.]+)', text)
+if not m:
+    print('ERROR: no TTT eval line in log'); raise SystemExit(1)
+val_loss, val_bpb = map(float, m[-1])
+ratio = val_bpb * math.log(2) / val_loss
+print(f'val_loss={val_loss:.4f}  val_bpb={val_bpb:.4f}  ratio={ratio:.4f}')
+print(f'CaseOps sidecar expected ratio: ~0.317')
+if abs(ratio - 0.317) < 0.010:
+    print('OK - ratio matches CaseOps sidecar byte counting.')
+elif abs(ratio - 0.268) < 0.010:
+    print('WARNING - ratio matches STANDARD, not CaseOps! Check CASEOPS_ENABLED.')
+elif abs(ratio - 0.291) < 0.010:
+    print('WARNING - ratio matches CaseOps LUT (inflated)! Sidecar not loaded.')
+else:
+    print(f'UNEXPECTED ratio {ratio:.4f} - investigate.')
+"
+
+# 5d. Confirm under-budget:
+ls -la final_model.int6.ptz
+# Expected: < 16,000,000 bytes (16 MB)
+
+# Decision gate:
+#   - Budget OK + ratio ~0.317 + BPB reasonable: proceed to STEP 6.
+#   - Budget OVER: tighten EMBED_BITS or MATRIX_CLIP_SIGMAS, rerun seed 42.
+#   - Ratio off: STOP and investigate.
+
+# =============================================================================
+# STEP 6: Run seeds 1337 and 2025 (only if seed 42 passed)
+# =============================================================================
+
+mv logs/p4_caseops.txt logs/p4_caseops_seed42.txt
+
+SEED=1337 torchrun --standalone --nproc_per_node=8 train_gpt.py
+mv logs/p4_caseops.txt logs/p4_caseops_seed1337.txt
+
+SEED=2025 torchrun --standalone --nproc_per_node=8 train_gpt.py
+mv logs/p4_caseops.txt logs/p4_caseops_seed2025.txt
+
+# =============================================================================
+# STEP 7: Compute 3-seed mean
+# =============================================================================
+
+python3 -c "
+import re, statistics
+seeds = [42, 1337, 2025]
+bpbs = []
+for s in seeds:
+    with open(f'logs/p4_caseops_seed{s}.txt') as f:
+        text = f.read()
+    m = re.findall(r'quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)', text)
+    bpbs.append(float(m[-1]))
+    print(f'seed {s}: val_bpb = {bpbs[-1]:.4f}')
+mean = statistics.mean(bpbs)
+std = statistics.pstdev(bpbs)
+print(f'Mean: {mean:.4f} (std {std:.4f})')
+print(f'C6 reference (standard): 1.0805')
+delta = mean - 1.0805
+if delta < 0:
+    print(f'P4_caseops BEATS C6 by {-delta:.4f} BPB')
+else:
+    print(f'P4_caseops WORSE than C6 by {delta:.4f} BPB')
+"
