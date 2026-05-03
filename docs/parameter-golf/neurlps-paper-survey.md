@@ -3,8 +3,8 @@
 Techniques from recent papers (NeurIPS, ICLR, ICML, ACL, COLM, MLSys 2023-2025) applicable to the Parameter Golf challenge
 (17M param GPT, 16 MB artifact, 10 min on 8xH100, 1024-token vocab, FineWeb).
 
-**Last updated:** 2026-04-30
-**Current SOTA:** 1.0066 BPB (us, P3, PR #2071, NEW SOTA) | **Baseline:** 1.2244 BPB | **Our best:** 1.0066 (P3, 3-seed mean, 8×H100) | **Best 2×H100:** 1.1368 (N1, EMA+SmallBatch) | **Previous SOTA:** 1.0611 (codemath3000, PR #1855)
+**Last updated:** 2026-05-02
+**Our best:** 1.0621 BPB (P4b, CaseOps + SOTA hparams, 8×H100) | **Baseline:** 1.2244 BPB | **External SOTA:** 1.0611 (codemath3000, PR #1855) | **Best 2×H100:** 1.1368 (N1, EMA+SmallBatch) | P3 retracted (byte accounting error)
 
 ---
 

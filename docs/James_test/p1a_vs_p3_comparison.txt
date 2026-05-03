@@ -1,10 +1,9 @@
 P1a vs P3 Comparison — Post-Retraction Analysis
 =================================================
-Summary: P1c achieved 0.9978 BPB (sub-1.0!) but has THREE bugs: gate OFF, CaseOps byte
-inflation, and CaseOps training data via symlinks. Corrected BPB ≈ 1.087 (worse than C6).
-P4_caseops (56425ee1) is INVALID: source failed → ran PR #1851 defaults + CaseOps byte
-contamination. Reported 0.9756 BPB, corrected ≈ 1.069. Must rerun with config pushed to pod.
-P1a (1.0769) is best BPB without bugs. C6 (1.0805) remains best legal submittable run.
+Summary: **P4b is new best legal run: 1.0621 BPB** (CaseOps + SOTA hparams + headwise gate,
+15.98 MB under budget). Beats C6 (1.0805) by −0.0184. Matches external SOTA (1.0611, delta 0.001).
+Byte ratio 0.3166 confirmed correct (CaseOps sidecar). Seed 1337 (mislabeled seed42 in RUN_ID).
+Previous: P1c had 3 bugs (corrected 1.087). P4_caseops INVALID (source failed). P1a over budget.
 
 Run Descriptions:
   C6:     PR #1851 base + headwise gate + emb7+eclip15. Default batch/EMA/schedule.
@@ -56,7 +55,7 @@ Run Descriptions:
 1. Side-by-Side Config
 ────────────────────────────────────────────────────────────────────────────────
 
-| Parameter             | C6 (reference)   | P1c (running)          | P4_caseops (INVALID)   | P3 (corrected)         |
+| Parameter             | C6 (reference)   | P1c (running)          | **P4b (NEW BEST)**     | P3 (corrected)         |
 |-----------------------|------------------|-----------------------|------------------------|------------------------|
 | Base stack            | @bigbag PR #1851 | @bigbag PR #1851      | @bigbag PR #1851       | @bigbag PR #1851       |
 | GATED_ATTN            | headwise         | headwise              | headwise               | headwise               |
@@ -64,7 +63,7 @@ Run Descriptions:
 | TRAIN_BATCH_TOKENS    | 786432 (default) | 786432 (default)      | 786432 (default)       | 196608 (small batch)   |
 | WARMDOWN_FRAC         | 0.72             | 0.85 ★                | 0.85 ★                 | 0.75 (PR #1851 default)|
 | MIN_LR                | 0.0              | 0.10 ★                | 0.10 ★                 | 0.0                    |
-| MATRIX_CLIP_SIGMAS    | 12.85            | **12.0** ★★           | 12.5 ★★                | 12.85                  |
+| MATRIX_CLIP_SIGMAS    | 12.85            | **12.0** ★★           | 13.0 ★★                | 12.85                  |
 | EMBED_CLIP_SIGMAS     | 15.0             | 14.0 ★                | 14.0 ★                 | 15.0                   |
 | BETA2                 | 0.95             | 0.99 ★                | 0.99 ★                 | 0.95                   |
 | GPTQ_RESERVE_SECONDS  | 12               | 0.5 ★                 | 0.5 ★                  | 4                      |
@@ -72,14 +71,13 @@ Run Descriptions:
 | CASEOPS_ENABLED       | N/A              | N/A                   | 1 (intentional)        | 1 (corrected)          |
 | MUON_MOMENTUM         | 0.99             | 0.99                  | 0.99                   | 0.97 (PR #1851 default)|
 | QK_GAIN_INIT          | 5.25             | 5.25                  | 5.25                   | 5.0                    |
-| Steps (8×H100)        | ~4,467           | 3,056                 | 5,045 (wrong config)   | ~12,140                |
-| Budget?               | Yes (15.70 MB)   | NO (16.69 MB)         | NO (16.14 MB, emb8)    | Yes (15.98 MB)         |
+| Steps (8×H100)        | ~4,467           | 3,056                 | 4,948                  | ~12,140                |
+| Budget?               | Yes (15.70 MB)   | NO (16.69 MB)         | Yes (15.98 MB)         | Yes (15.98 MB)         |
 
 ★ = SOTA hparam override from PR #1855 (codemath3000)
 
 Key difference: P1c = P1a SOTA hparams on standard data (had 3 bugs).
-               P4_caseops = INTENDED to be P1c hparams + CaseOps + sidecar bytes.
-                            ACTUALLY ran PR #1851 defaults (source failed, file not on pod).
+               P4b = P1c hparams + CaseOps + sidecar bytes + CLIP=13.0. NEW BEST.
                P3 = training dynamics changes (EMA + small batch + emb6).
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -88,20 +86,17 @@ Key difference: P1c = P1a SOTA hparams on standard data (had 3 bugs).
 
 | Run     | TTT BPB | val_loss | Steps  | Size      | Budget? | Status     |
 |---------|---------|----------|--------|-----------|---------|------------|
-| **P1c** | **0.9978**| 2.3912  | 3,056  | 16.69 MB  | NO      | GATE+BYTE BUG |
-| P1a     | 1.0769  | 2.7816   | 4,587  | 16.35 MB  | NO      | Best BPB   |
-| P4_co   | 0.9756† | 2.7612   | 5,045  | 16.14 MB  | NO      | INVALID (wrong config + CaseOps bytes) |
-| P3-fix  | 1.0975* | 2.4012   | 12,140 | 15.98 MB  | Yes     | CORRECTED  |
-| C6      | 1.0805  | 2.7910   | 4,467  | 15.70 MB  | Yes     | SUBMITTED  |
+| **P4b** | **1.0621**| 2.3242  | 4,948  | 15.98 MB  | Yes     | **NEW BEST** (CaseOps sidecar) |
 | ext SOTA| 1.0611  | —        | ~4,930 | ~15.90 MB | Yes     | PR #1855   |
+| P1a     | 1.0769  | 2.7816   | 4,587  | 16.35 MB  | NO      | Over budget |
+| C6      | 1.0805  | 2.7910   | 4,467  | 15.70 MB  | Yes     | SUBMITTED  |
+| P3-fix  | 1.0975* | 2.4012   | 12,140 | 15.98 MB  | Yes     | CORRECTED  |
+| P1c     | 0.9978  | 2.3912   | 3,056  | 16.69 MB  | NO      | GATE+BYTE BUG |
 
 *P3-fix = 2-seed mean (seed42: 1.09724, seed1337: 1.09779)
-†P4_co = CaseOps-inflated BPB (ratio 0.2449 vs standard 0.2683). Corrected ≈ 1.069.
-         Ran PR #1851 defaults (source failed). Log: 56425ee1-5461-4a73-9216-3c5ff401da55.txt
+P4b = seed 1337 (mislabeled seed42 in RUN_ID). Log: p4b_caseops_seed42.txt
 
-Delta from C6:  P1a = −0.0036 (better)    P3-fix = +0.0170 (worse)
-                P1c = +0.0065 (corrected — 3 bugs: gate OFF + byte inflation + CaseOps data)
-                P4_co = −0.012 (corrected, but MEANINGLESS — wrong config ran)
+Delta from C6:  **P4b = −0.0184 (NEW BEST)**   P1a = −0.0036    P3-fix = +0.0170
 
 ────────────────────────────────────────────────────────────────────────────────
 2a. P1c Bugs Found

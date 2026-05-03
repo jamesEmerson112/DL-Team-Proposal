@@ -6,8 +6,9 @@
 
 | Run | Technique | Params | val_loss | val_bpb | Steps | Step avg | Quant | Size | Budget? |
 |-----|-----------|--------|----------|---------|-------|----------|-------|------|---------|
+| **P4b●** | **PR #1851 + headwise + SOTA hparams + CaseOps (seed 1337)** | **35.99M** | **2.3242** | **1.0621** | **4,948** | — | **int6+brotli** | **15.98 MB** | **Yes** |
 | ~~P3●~~ | ~~PR #1851 fork + headwise + EMA=0.990 + small batch + emb6 (3-seed mean)~~ | ~~35.99M~~ | — | ~~1.0066~~ | ~~12,382~~ | — | ~~int6+brotli~~ | ~~~15.97 MB~~ | ~~Yes~~ |
-| **P3-fix** | **P3 rerun with CASEOPS_ENABLED=1 (correct byte accounting, seed 42)** | **35.99M** | **2.4012** | **1.0972** | **10,796** | — | **int6+brotli** | **TBD** | **TBD** |
+| P3-fix | P3 rerun with CASEOPS_ENABLED=1 (correct byte accounting, seed 42) | 35.99M | 2.4012 | 1.0972 | 10,796 | — | int6+brotli | 15.98 MB | Yes |
 | *frontier* | *ndokutovich #1967 (N-gram Tilt + LeakyReLU 0.3)* | *~36M* | — | *1.0585* | — | — | — | — | *ref* |
 | *SOTA* | *codemath3000 #1855 (SmearGate+LQER+9HP)* | *~36M* | — | *1.0611* | *~4,930* | — | *int6+lrzip* | *~15.90 MB* | *ref* |
 | P1a★ | V2 C6 + SOTA hparams (6 overrides) | 35.99M | 2.7816 | 1.0769 | 4,587 | — | int6+brotli | 16.35 MB | **No** |
@@ -23,13 +24,13 @@
 
 **V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. SOTA: 1.0611 (codemath3000, PR #1855).**
 
-**P3 RETRACTED — byte accounting error.** Original P3 reported 1.0066 BPB but used an inflated byte denominator (CaseOps LUT ~164.6M bytes vs canonical sidecar ~151M bytes). Rerun with `CASEOPS_ENABLED=1` (correct sidecar byte counting) gives **1.0972 BPB** (seed 42) — worse than C6 (1.0805). **Best legal run: C6** (1.0805 BPB, 3-seed mean).
+**P4b is NEW BEST at 1.0621 BPB** (CaseOps sidecar, SOTA hparams, headwise gate, CLIP=13.0). Matches external SOTA (1.0611, delta 0.001). Under budget at 15.98 MB. Seed 1337. Byte ratio 0.3166 confirmed correct. P3 retracted (inflated byte denominator). C6 (1.0805) was previous best.
 
 **◆ L1: EMA=0.990 HURT on 8×H100** (+0.0025 vs C6). With only ~4,486 steps, aggressive EMA averages too few checkpoints. **L2: Small Batch + EMA=0.990 HURT EVEN MORE** (+0.0121 vs C6). Despite 13,146 steps (where EMA=0.990 helped on 2×H100), the smaller batch size degrades quality more than extra steps help. EMA tuning does not transfer from 2×H100 to 8×H100 at any batch size.
 
 **★ P1a: SOTA hparams improve BPB by −0.0036 vs C6** (1.0769 vs 1.0805) but over budget (16.35 MB). 6 overrides from PR #1855: WARMDOWN=0.85, MIN_LR=0.10, MATRIX_CLIP_SIGMAS=11.5, EMBED_CLIP_SIGMAS=14.0, BETA2=0.99, GPTQ_RESERVE=0.5. Looser MATRIX_CLIP_SIGMAS (11.5 vs 12.85) is the likely budget-buster. **P1b: NUM_LOOPS=3 hurts** — fewer steps (4,126 vs 4,587), throughput penalty > depth benefit (+0.0024 worse than P1a). Keep NUM_LOOPS=2.
 
-> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). **P3 retracted** — byte accounting error (inflated denominator from CaseOps LUT). Corrected P3 = 1.0972 BPB (worse than C6). **Legal best: C6 at 1.0805 BPB.** External SOTA: 1.0611 (codemath3000 PR #1855).
+> **PreQuantTTT ruled C3 violation** (score-after-adapt). okezue withdrew PR #1958 for the same issue — training on val data before the reported eval. R4 and X1 results below used PreQuantTTT and are **non-compliant**. PPM byte mixtures also ruled invalid (C2 violation, PR #1905 — probability distribution doesn't sum to 1). **P3 retracted** — byte accounting error (inflated denominator from CaseOps LUT). Corrected P3 = 1.0972 BPB (worse than C6). **Legal best: P4b at 1.0621 BPB.** External SOTA: 1.0611 (codemath3000 PR #1855).
 
 ### 3-Seed Reproducibility — V2 C6 (Headwise + emb7+eclip15), 8×H100
 
@@ -734,10 +735,11 @@ The val_loss is essentially identical — confirming the model quality didn't ch
 
 ### Where We Stand
 
-- **P3 RETRACTED** — original 1.0066 BPB was artifact of inflated byte denominator. Corrected: **1.0972 BPB** (seed 42, worse than C6)
-- **Our best legal run: C6 at 1.0805 BPB** (3-seed mean, std ±0.0012)
-- **Gap to external SOTA (1.0611, PR #1855):** +0.0194 BPB (we are behind)
-- **Gap to baseline (1.2244):** −0.1439 BPB
+- **P4b is NEW BEST: 1.0621 BPB** (CaseOps + SOTA hparams + headwise gate, 15.98 MB, under budget)
+- **Gap to external SOTA (1.0611, PR #1855):** +0.001 BPB (essentially tied)
+- **Delta vs C6:** −0.0184 BPB (P4b beats C6 decisively)
+- **Gap to baseline (1.2244):** −0.1623 BPB
+- P3 RETRACTED — original 1.0066 was inflated byte denominator. Corrected: 1.0972 (worse than C6)
 - **Lesson learned:** CaseOps byte accounting requires `CASEOPS_ENABLED=1` with sidecar file for correct BPB. Symlink + `CASEOPS_ENABLED=0` silently inflates denominator by ~9%.
 
 ### Submission Strategy
