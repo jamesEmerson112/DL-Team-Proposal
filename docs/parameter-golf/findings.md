@@ -1424,3 +1424,169 @@ _Findings from Parameter Golf that are relevant to the nanochat training pipelin
 
 - The 10-min wall clock constraint makes GPU count the primary lever — scaling from 2→8 GPUs is the easiest win
 - Compression (int8+zlib) preserves model quality almost perfectly — useful for deployment constraints in the nanochat pipeline too
+
+---
+
+## Log file index
+
+Each entry in this document corresponds to a `.txt` log file in `parameter-golf/logs/`. Filenames are prefixed with the run label used above so `ls parameter-golf/logs/ | grep <label>` finds the source data instantly.
+
+**Naming legend:** `_OVER` over budget · `_FAILED` / `_RETRACTED` invalid result · `_INCOMPLETE` truncated · `_DUP` byte-identical duplicate · `_INFLATED` byte-denominator artifact · `_C3VIOL` Parameter Golf C3 rule violation (PreQuantTTT) · `INVALID_S6_*` SLM code absent on pod · suffix `_alt` distinct rerun · suffix `-rerun` repeat on different hardware.
+
+### 8×H100 official runs
+
+| Run | Log filename |
+|-----|-------------|
+| C6 (3-seed) | `C6_v2_c6_seed42.txt`, `C6_v2_c6_seed1337.txt`, `C6_v2_c6_seed2025.txt` |
+| A1 ablation | `A1_v2_c6_nogptqtune_8gpu.txt`, `A1_v2_f1_8gpu_alt.txt` |
+| A2 ablation | `A2_v2_f7_8gpu.txt` |
+| L1 EMA=0.990 | `L1_legal_ema090.txt`, `L1_legal_ema090_seed42.txt` |
+| L2 EMA=0.990 + small batch | `L2_legal_ema090_smallbatch.txt`, `L2_legal_ema090_smallbatch_seed42.txt` |
+| P1a SOTA hparams | `P1a_hparam_sota.txt`, `P1a_hparam_sota_seed42.txt` |
+| P1b NUM_LOOPS=3 | `P1b_hparam_sota_loop3.txt`, `P1b_hparam_sota_loop3_seed42.txt` |
+| P1c clip12 | `P1c_p4_clip12.txt` |
+| P3 (retracted) | `P3_inflated_seed42_RETRACTED.txt`, `P3_inflated_seed1337_RETRACTED.txt`, `P3_inflated_seed2025_RETRACTED.txt` |
+| P3-fix corrected | `P3-fix_corrected_seed42.txt`, `P3-fix_corrected_seed1337.txt`, `P3-fix_corrected_seed42_incomplete.txt` |
+| **P4b NEW BEST** | `P4b_caseops_seed42.txt` |
+| Run 11 (V1, 8×H100) | `Run11_sp8192_combo_slim.txt`, `Run11_sp8192_combo_slim_8gpu_alt.txt` |
+| Run 11 3-seed | `Run11-3seed_sp8192_combo_slim_seed42.txt`, `Run11-3seed_sp8192_combo_slim_seed1337.txt`, `Run11-3seed_sp8192_combo_slim_seed2025.txt` |
+
+### V1 numbered runs (Sessions 1–7, 2×H100)
+
+| Run | Log filename |
+|-----|-------------|
+| Run 1 | `Run01_baseline_sp1024.txt` |
+| Run 2 headwise | `Run02_gated_attn_headwise.txt` |
+| Run 3 elementwise (over) | `Run03_gated_attn_elementwise_OVER.txt` |
+| Run 4 MQA (over) | `Run04_mqa_OVER.txt` |
+| Run 5 INVALID | `Run05_INVALID_stale_env.txt` |
+| Run 6 GQA baseline | `Run06_gqa_baseline.txt` |
+| Run 7 LeakyReLU² | `Run07_leaky_relu2.txt`, `Run07-rerun_leaky_relu2_2gpu.txt` |
+| Run 8 LeakyReLU² + headwise | `Run08_leaky_relu2_headwise.txt` |
+| Run 9 headwise + QK-Gain 5.0 | `Run09_headwise_qkgain5.txt`, `Run09-rerun_headwise_qkgain5_2gpu.txt` |
+| Run 10 SP8192 combo (over) | `Run10_sp8192_combo_OVER.txt` |
+| Run A / D / H | `RunA_sp8192_combo_slim_2gpu.txt`, `RunD_sp8192_combo_slim_2gpu.txt`, `RunH_sp8192_combo_slim_nottt.txt` |
+
+### Session 8 — Elementwise + MQA sweep
+
+| Run | Log filename |
+|-----|-------------|
+| E1 (over) | `S8-E1_elem_dim512_OVER.txt` |
+| E2 | `S8-E2_elem_dim448.txt` |
+| dim=480 (extra) | `S8-extra_elem_dim480.txt` |
+
+### Session 9 — GPTQ validation
+
+| Run | Log filename |
+|-----|-------------|
+| G2 best | `S9-G2_gptq_int7_train.txt` |
+| G3 | `S9-G3_gptq_int6_ar.txt` |
+| G4 | `S9-G4_gptq_int6_train.txt` |
+
+### Session 10 — Benchmark sweep (dim / layers / attn)
+
+| Run | Log filename |
+|-----|-------------|
+| D1 dim=448 | `S10-D1_bench_dim448.txt` |
+| D2 dim=512 | `S10-D2_bench_dim512.txt` |
+| D3 dim=768 (over) | `S10-D3_bench_dim768_OVER.txt` |
+| D4 dim=1024 (over) | `S10-D4_bench_dim1024_OVER.txt` |
+| L2 10L | `S10-L2_bench_10L_dim512.txt` |
+| L3 11L | `S10-L3_bench_11L_dim512.txt` |
+| A2 MHA | `S10-A2_bench_mha_dim512.txt` |
+
+### Session 11 — GPTQ tuning + ResFormer
+
+| Run | Log filename |
+|-----|-------------|
+| Q1 sequential (failed) | `S11-Q1_gptq_sequential_FAILED.txt` |
+| Q3 embed (failed) | `S11-Q3_gptq_embed_FAILED.txt` |
+| Q7 all (failed) | `S11-Q7_gptq_all_FAILED.txt` |
+| R0 α=0.0 | `S11-R0_resformer_a0.txt` |
+| R1 α=0.1 | `S11-R1_resformer_a01.txt` |
+| R3 α=0.5 (best) | `S11-R3_resformer_a05.txt` |
+| R4 α=0.7 | `S11-R4_resformer_a07.txt` |
+
+### Session 12 — V2 factorial F1–F9
+
+| Run | Log filename |
+|-----|-------------|
+| F1 PR ctrl | `F1_v2_pr_none.txt` |
+| F2 PR + headwise | `F2_v2_pr_head.txt` |
+| F3 PR + elem (over) | `F3_v2_pr_elem_OVER.txt` |
+| F4 RF ctrl | `F4_v2_rf_none.txt` |
+| F5 RF + headwise | `F5_v2_rf_head.txt` |
+| F6 RF + elem (over) | `F6_v2_rf_elem_OVER.txt` |
+| F7 PR+RF | `F7_v2_both_none.txt` |
+| F8 PR+RF + headwise | `F8_v2_both_head.txt` |
+| F9 PR+RF + elem (over) | `F9_v2_both_elem_OVER.txt` |
+
+### Session 13 — V2 compression C1–C7 (C5, C8 absent in logs)
+
+| Run | Log filename |
+|-----|-------------|
+| C1 emb7 | `C1_v2_f2_emb7.txt` |
+| C2 emb6 | `C2_v2_f2_emb6.txt` |
+| C3 clip10 (over) | `C3_v2_f2_clip10_OVER.txt` |
+| C4 clip8 (over) | `C4_v2_f2_clip8_OVER.txt` |
+| **C6 official** | `C6_v2_f2_emb7_eclip15.txt` |
+| C7 emb7+clip10+eclip15 (over) | `C7_v2_f2_emb7_clip10_eclip15_OVER.txt` |
+
+### Session 15 — C6 fine-tuning sweep
+
+| Run | Log filename |
+|-----|-------------|
+| E1 EMA=0.995 (best S15) | `S15-E1_c6_ema995.txt` |
+| E2 EMA=0.997 | `S15-E2_c6_ema997.txt` |
+| E3 EMA=0.999 (failed) | `S15-E3_c6_ema999_FAILED.txt` |
+| W1 wd=0.08 | `S15-W1_c6_wd08.txt` |
+| W2 wd=0.10 | `S15-W2_c6_wd10.txt` |
+| W3 wd=0.11 | `S15-W3_c6_wd11.txt` |
+| D1 warmdown=0.80 | `S15-D1_c6_warmdown80.txt` |
+| Q1 qkg=5.5 | `S15-Q1_c6_qkg55.txt` |
+| Q2 qkg=5.75 | `S15-Q2_c6_qkg575.txt` |
+| Q3 qkg=6.0 | `S15-Q3_c6_qkg60.txt` |
+| T1–T9 TTT epochs × LR | `S15-T1_..` through `S15-T9_c6_ttt_e7_lr1.txt` (T8 = best) |
+| P0 paper baseline | `S15-P0_v2_p16p5_r0_baseline.txt` |
+| P1–P3 LR warmup 2/5/10% | `S15-P1_..warmup002`, `S15-P2_..warmup005`, `S15-P3w_..warmup010` |
+| P4–P5 Structured FFN | `S15-P4sffn_v2_sffn_r50_b4.txt`, `S15-P5_v2_sffn_r75_b8.txt` |
+| Peri-LN (failed) | `S15-PeriLN_v2_p22p15_r1_FAILED.txt` |
+| B2 small batch ga=1 | `B2_v2_p22p15_r2_ga1.txt` |
+| B3 ga=1 + β2=0.99 | `B3_v2_p22p15_r3_ga1_b299.txt` |
+
+### Session 16 — EMA deeper + PreQuantTTT
+
+| Run | Log filename |
+|-----|-------------|
+| R1 EMA=0.995 + wd=0.10 | `S16-R1_c6_ema995_wd10.txt` |
+| R2 EMA=0.993 | `S16-R2_c6_ema993.txt` |
+| R3 EMA=0.990 (best EMA) | `S16-R3_c6_ema990.txt` |
+| R4 PreQuantTTT (brotli, **C3 violation**) | `S16-R4_c6_prequant_ttt.txt` |
+| R4 PreQuantTTT (lrzip, C3 violation) | `S16-R4lrzip_c6_prequant_lrzip_emb7.txt` |
+
+### SLM (Sessions 6 INVALID + 7 valid)
+
+| Run | Log filename |
+|-----|-------------|
+| Session 6 (SLM code absent) | `INVALID_S6_slm_test_k60.txt`, `INVALID_S6_slm_k{40,50,70,80,90}.txt`, `INVALID_S6_leaky_relu2_slm_k60.txt`, `INVALID_S6_leaky_relu2_headwise_slm_k60.txt`, `INVALID_S6_headwise_qkgain5_slm_k60.txt`, `INVALID_S6_sp8192_combo_slim_slm.txt` |
+| S7-S1 SP1024 k=0.6 | `S7-S1_slm_val_sp1024_k60.txt` |
+| S7-S2 SP8192 k=0.6 | `S7-S2_slm_val_sp8192_k60.txt` |
+| S7-S3 SP8192 k=0.7 | `S7-S3_slm_val_sp8192_k70.txt` |
+| S7-S4 SP8192 k=0.8 | `S7-S4_slm_val_sp8192_k80.txt` |
+
+### X1 + V2-base + exploratory
+
+| Run | Log filename |
+|-----|-------------|
+| X1 fullstack (PreQuantTTT, C3 violation) | `X1_fullstack_seed42_C3VIOL.txt`, `X1_fullstack_seed1337_C3VIOL.txt`, `X1_fullstack_seed2025_C3VIOL.txt` |
+| V2 base reference | `V2-base_seed42.txt` |
+| V2 C6 nogptqtune (incomplete) | `V2-c6_nogptqtune_INCOMPLETE.txt` |
+| Early MQA / 1-GPU exploration | `S-explore_1gpu.txt`, `S-explore_mqa_1gpu.txt`, `S-explore_mqa_test.txt` |
+
+### Inflated / duplicate (off the critical path)
+
+| Note | Log filename |
+|------|-------------|
+| Byte-identical duplicate of `P3-fix_corrected_seed42.txt` (safe to `git rm`) | `_DUP_p3_corrected_seed42.txt` |
+| Pre-fix P4 attempt with `caseops_enabled=False` (inflated bytes, ~0.97 BPB artifact) | `P4-pre_caseops_seed1337_INFLATED.txt` |
+| P4 exploration with `caseops_enabled=False` + emb=8 (inflated bytes) | `P4-explore_caseops_off_emb8_INFLATED.txt` |
