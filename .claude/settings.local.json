@@ -22,7 +22,16 @@
       "Bash(gh pr:*)",
       "Bash(mv \"parameter-golf/logs/0d6ec472-4cba-46b7-afe4-2ed64633ead3.txt\" \"parameter-golf/logs/p3_corrected_seed42.txt\")",
       "Bash(mv \"parameter-golf/logs/9a386796-8f86-4b81-a421-bad3a74bcfcd.txt\" \"parameter-golf/logs/p3_corrected_seed1337.txt\")",
-      "Bash(mv \"parameter-golf/logs/7a3f8113-bca4-4cbd-921e-aed6aa80c602.txt\" \"parameter-golf/logs/p3_corrected_seed42_incomplete.txt\")"
+      "Bash(mv \"parameter-golf/logs/7a3f8113-bca4-4cbd-921e-aed6aa80c602.txt\" \"parameter-golf/logs/p3_corrected_seed42_incomplete.txt\")",
+      "Bash(gh api *)",
+      "Bash(python3 -c ' *)",
+      "Bash(gh issue *)",
+      "Bash(head -30 \"0d6ec472-4cba-46b7-afe4-2ed64633ead3 \\(1\\).txt\")",
+      "Bash(head -30 \"56425ee1-5461-4a73-9216-3c5ff401da55.txt\")",
+      "Bash(git -C /Users/mrbam/Github/GitHub/DL-Team-Proposal submodule status)",
+      "Bash(git commit *)",
+      "Bash(git mv *)",
+      "Bash(git *)"
     ]
   }
 }

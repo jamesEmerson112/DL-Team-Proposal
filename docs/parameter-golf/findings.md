@@ -21,6 +21,7 @@
 | A2● | V2 F7 (PR+RF, α=0.5) | 35.94M | 2.7971 | 1.0828 | 4,516 | — | int6+brotli | 15.98 MB | Yes |
 | 10 | SP8192 combo + TTT | 20.77M | 3.0666 | 1.1872 | 10,582 | 57ms | int8+zlib | 19.41 MB | **No** |
 | 11 | SP8192 combo slim + TTT | 16.36M | 3.1197 | 1.2077 | 11,073 | 54ms | int8+zlib | 15.35 MB | Yes |
+Naive Baseline	1.2244	Baseline	9layer 512dim 1024vocab TiedEmbeddings 4 KV heads	2026-03-18
 
 **V2 runs: PyTorch 2.11, CUDA 13.0, FA3, SP8192, 10-min wall clock. Runs 10-11: PyTorch 2.6. PG baseline: 1.2244 BPB. SOTA: 1.0611 (codemath3000, PR #1855).**
 

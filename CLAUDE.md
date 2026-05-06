@@ -332,3 +332,14 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [edit] Updated `docs/James_test/run_x1_8gpu_commands.txt` — clean pod instructions for P1c run (no comments, just commands)
 - [finding] MATRIX_CLIP_SIGMAS confirmed at `parameter-golf/train_gpt.py:320` — reads from env with default 12.85
 - [todo] Run P1c on 8×H100 pod. Expected: BPB ~1.077-1.080, size <16 MB. If passes → 3-seed for new best legal submission.
+
+### 2026-05-05 (Session 23 — Final Paper Appendix)
+- [edit] Added three appendices to `docs/James_notes/final_paper.txt` between bibliography and `\end{document}` (file grew 1211 → 1270 lines, +59 lines, purely additive — no changes to main body, references, or run numbers):
+  - **Appendix A: Code and Artifacts** — `\url{...}` links to project repo (`github.com/jamesEmerson112/DL-Team-Proposal`), Parameter Golf fork (`github.com/jamesEmerson112/parameter-golf`), record candidate PR (`github.com/openai/parameter-golf/pull/2005`), plus pointer to full audit trail of 130+ runs in `docs/parameter-golf/findings.md`
+  - **Appendix B: Reproduction** — two `verbatim` blocks: (1) 3-seed legal record (V2 stack, 1.0805 BPB, PR #2005) via `source runs/configs/v2_base.env` + headwise/emb7/eclip15 overrides + `torchrun ... train_gpt_v2.py`; (2) SOTA-overrides + CaseOps single-seed (1.0621 BPB, seed 1337) via `source runs/configs/p4b_caseops.env` + `torchrun ... train_gpt.py`, with note that CaseOps requires `romeerp/parameter-golf-caseops-v1` HF dataset + sidecar
+  - **Appendix C: Per-Seed Results** — booktabs table: V2 stack seeds (42=1.0818, 1337=1.0794, 2025=1.0804, mean 1.0805 ±0.0012) + V2+SOTA-overrides+CaseOps row (seed 1337 = 1.0621). Footnote on artifact sizes 15.70 MB vs 15.98 MB, both under 16 MB cap
+- [finding] Used plain `\section*{Appendix...}` instead of `\appendix` macro to avoid cvpr.sty renumbering of main-body sections; `hyperref` already loaded with `colorlinks` (line 21), so no extra package needed for clickable URLs
+- [finding] Verified post-edit: zero retracted-run regressions (no P3 / 2071 / 1.0066 / 1.0972 / "byte account" hits), three `\section*{Appendix...}` lines at expected positions (1211, 1226, 1249), file still terminates with `\end{document}`
+- [finding] Reproduction config for Appendix B verified by reading `runs/configs/p4b_caseops.env` directly: BETA2=0.99, WARMDOWN_FRAC=0.85, MIN_LR=0.10, EMBED_CLIP_SIGMAS=14.0, MATRIX_CLIP_SIGMAS=13.0, GPTQ_RESERVE_SECONDS=0.5, CASEOPS_ENABLED=1
+- [edit] Overwrote plan file `~/.claude/plans/this-subsection-of-references-mellow-shell.md` with the new appendix plan
+- [ref] Paper file: `docs/James_notes/final_paper.txt`
