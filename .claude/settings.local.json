@@ -31,7 +31,10 @@
       "Bash(git -C /Users/mrbam/Github/GitHub/DL-Team-Proposal submodule status)",
       "Bash(git commit *)",
       "Bash(git mv *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(grep -o '\\\\\\\\bibitem{[^}]*}' \"C:/Users/voan2/Documents/GitHub/DL-Team-Proposal/docs/James_notes/final_paper.txt\")",
+      "Bash(grep:*)",
+      "Bash(find C:Usersvoan2DocumentsGitHubDL-Team-Proposal -maxdepth 3 -name *.png -type f)"
     ]
   }
 }

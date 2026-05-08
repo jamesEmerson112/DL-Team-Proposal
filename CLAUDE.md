@@ -343,3 +343,56 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [finding] Reproduction config for Appendix B verified by reading `runs/configs/p4b_caseops.env` directly: BETA2=0.99, WARMDOWN_FRAC=0.85, MIN_LR=0.10, EMBED_CLIP_SIGMAS=14.0, MATRIX_CLIP_SIGMAS=13.0, GPTQ_RESERVE_SECONDS=0.5, CASEOPS_ENABLED=1
 - [edit] Overwrote plan file `~/.claude/plans/this-subsection-of-references-mellow-shell.md` with the new appendix plan
 - [ref] Paper file: `docs/James_notes/final_paper.txt`
+
+### 2026-05-05 (Session 24 — Final Paper Reframing)
+- [edit] Major rewrite of `docs/James_notes/final_paper.txt` — reframed paper around "survey 29 papers, test 10, 8 fail" narrative instead of presenting adopted V2 stack as own contribution. File went from 1270 → 1212 lines (deleted ~160 lines commented-out old Experiments, added ~100 lines new content).
+- **Abstract**: Rewritten — leads with "8 of 10 techniques degraded performance," mentions headwise gated attention as sole consistent positive, frames compression/FA3/SP8192 as budget-layer contributions
+- **Introduction**: Reframed research question from "how good can a model become" to "which published techniques transfer to this extreme-constraint regime." Added survey→select→test→report methodology overview
+- **Related Work**: Restructured into 5 subsections:
+  - PG lineage (kept)
+  - **Nanochat study** (NEW) — co-led with Ranganath, informed SP8192 adoption, MHA/GQA stress-testing, LeakyReLU² choice
+  - **Adopted baseline** (NEW) — explicitly labels V2 stack as adopted from leaderboard, not claimed as contribution
+  - **Techniques under test** (NEW) — introduces all 10 techniques with citations
+  - Scope (kept)
+- **Approach**: Major restructure:
+  - Baseline now distinguishes V1 (original) vs V2 (adopted) with explicit attribution
+  - "Techniques investigated" → **"Score-layer techniques tested"** — all 10 listed with descriptions
+  - **"Budget-layer contributions"** (NEW subsection) — compression tuning (GPTQ int6+Brotli freed ~5 MB), SP8192 tokenizer, FA3+PyTorch 2.11 (~2× throughput). These opened doors to depth recurrence and MLP ratio exploration
+  - Contributions rewritten: 4 explicit claims (headwise gate, negative results, enablers, transfer analysis)
+- **Experiments**: Added 3 major new elements:
+  - **Technique Report Card** table (`tab:reportcard`) — all 10 techniques, delta BPB at 2×/8×H100, verdict column
+  - **SLM negative result** subsection with `fig:slm_sweep` placeholder
+  - **Enabler contributions** subsection
+  - `fig:technique_impact` placeholder (horizontal bar chart)
+  - `fig:transfer` placeholder (2×→8× paired comparison)
+  - Table 2 expanded with 5 new rows (LR warmup ×2, Structured FFN, Peri-LN, HybridNorm)
+  - Success/failure rewritten around 3 failure modes (throughput, normalization, scale-dependent)
+- **Discussion**: Added 4th pattern — **hardware-scale transfer is not free** (EMA/small batch helped on 2× but hurt on 8×). Headwise gate highlighted as only technique that transferred stably
+- **Conclusion**: Added paragraph explaining WHY headwise gated attention succeeds where others fail — negligible params (~37K), zero throughput penalty (single element-wise multiply), compresses cleanly under GPTQ. Frames the 3 constraints (params, throughput, compression) as a litmus test
+- **Team Contributions**: Updated An Thien Vo (emphasizes technique testing + headwise gate as novel), Siddarth (adds nanochat details: RoPE, RMSNorm, LeakyReLU², Muon, GQA study)
+- **Bibliography**: Added 3 new entries: `smallbatch` (Paper #15), `lrwarmup` (Paper #16), `structuredffn` (Paper #5)
+- **Cleanup**: Deleted ~160 lines of commented-out old Experiments section (was lines 242-408). Ashray's HybridNorm kept as-is per user request
+- [finding] All `\ref{}` targets verified — 3 new figures (technique_impact, slm_sweep, transfer), 1 new table (reportcard), all have matching `\label{}` definitions
+- [finding] All `\cite{}` keys verified — 29 bibitem entries cover all citations including 3 new ones
+- [finding] Zero retracted P3 numbers (1.0066, 1.0972) in final file — confirmed clean
+- [finding] 1.0621 BPB run correctly described as including headwise gate (V2 stack includes it)
+- [decision] Nanochat: paragraph in Related Work (not its own subsection)
+- [decision] Enablers (compression, FA3, PyTorch): framed as contributions, not just methodology
+- [decision] Both results kept prominently: C6 (1.0805, 3-seed verified) and 1.0621 (single-seed with adopted overrides + headwise gate)
+- [decision] Ashray's HybridNorm left as-is — user cannot validate logs but respects teammate's work
+- [decision] Tone: academic contribution (negative results are valuable)
+- [ref] Plan file: `~/.claude/plans/sprightly-brewing-wilkes.md`
+- [ref] Paper file: `docs/James_notes/final_paper.txt`
+- [todo] Create actual plot files for 3 figure placeholders: `fig:technique_impact`, `fig:slm_sweep`, `fig:transfer`
+
+### 2026-05-05 (Session 25 — Plot Integration into Paper)
+- [edit] Integrated 5 approved plots from `docs/plots/final/` into `docs/James_notes/final_paper.txt` for Overleaf:
+  - Edit 1: Updated `attention_variants.png` path to `final/attention_variants.png` (line 427)
+  - Edit 2: Added `final/reportcard_table.png` as a native LaTeX booktabs table (`tab:reportcard`) after the main results table — 4 columns (Technique, 2x ΔBPB, 8x ΔBPB, Verdict), 10 technique rows
+  - Edit 3: Added `final/v2_factorial.png` as `fig:factorial` between attention variants and transfer subsections
+  - Edit 4: Added `final/negative_results_panel.png` as full-width `figure*` (`fig:negative`) after training curves, before "Success, failure, and limitations"
+  - Edit 5: Added `final/main_results_table.png` as `fig:main-results` in Discussion section before concluding paragraph
+- [finding] Paper now has 7 `\includegraphics` (5 use `final/` prefix, 2 unchanged: `latex/Paper_Overview.png`, `training_curves.png`)
+- [finding] 7 unique figure labels + 1 new table label (`tab:reportcard`), no collisions
+- [decision] Converted reportcard image to native LaTeX booktabs table instead of using `\includegraphics` — better for text searchability and Overleaf rendering
+- [ref] Paper file: `docs/James_notes/final_paper.txt`
