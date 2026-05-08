@@ -1,0 +1,40 @@
+git clone https://github.com/jamesEmerson112/DL-Team-Proposal.git
+cd DL-Team-Proposal && git checkout James-experiment && git pull origin James-experiment
+cd parameter-golf
+
+pip install -r requirements.txt && pip install --upgrade torch
+pip install --no-cache-dir "https://download.pytorch.org/whl/cu130/flash_attn_3-3.0.0-cp39-abi3-manylinux_2_28_x86_64.whl"
+
+rm -f data/manifest.json
+MATCHED_FINEWEB_REPO_ID=romeerp/parameter-golf-caseops-v1 MATCHED_FINEWEB_REMOTE_ROOT_PREFIX=datasets python3 data/cached_challenge_fineweb.py --variant sp8192_lossless_caps_caseops_v1_reserved --train-shards 80
+
+python3 -c "
+from huggingface_hub import hf_hub_download; import shutil, os
+cached = hf_hub_download(repo_id='romeerp/parameter-golf-caseops-v1', filename='fineweb_val_bytes_000000.bin', subfolder='datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved', repo_type='dataset')
+dest = 'data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin'
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+try: os.link(os.path.realpath(cached), dest)
+except OSError: shutil.copy2(os.path.realpath(cached), dest)
+print(f'Sidecar: {os.path.getsize(dest):,} bytes')
+"
+
+chmod +r data/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/*.bin
+
+source ../runs/configs/p4b_caseops.env
+echo "CASEOPS=$CASEOPS_ENABLED GATE=$GATED_ATTN_ENABLED EMB=$EMBED_BITS B2=$BETA2 WD=$WARMDOWN_FRAC MLR=$MIN_LR CLIP=$MATRIX_CLIP_SIGMAS"
+
+RUN_ID=p4b_caseops_seed42 SEED=42 torchrun --standalone --nproc_per_node=8 train_gpt.py
+ls -la final_model.int6.ptz
+RUN_ID=p4b_caseops_seed1337 SEED=1337 torchrun --standalone --nproc_per_node=8 train_gpt.py
+RUN_ID=p4b_caseops_seed2025 SEED=2025 torchrun --standalone --nproc_per_node=8 train_gpt.py
+
+python3 -c "
+import re, statistics
+seeds, bpbs = [42, 1337, 2025], []
+for s in seeds:
+    text = open(f'logs/p4b_caseops_seed{s}.txt').read()
+    bpbs.append(float(re.findall(r'quantized_ttt_phased val_loss:[\d.]+ val_bpb:([\d.]+)', text)[-1]))
+    print(f'seed {s}: {bpbs[-1]:.4f}')
+m = statistics.mean(bpbs)
+print(f'Mean: {m:.4f} (std {statistics.pstdev(bpbs):.4f}) | C6: 1.0805 | delta: {m-1.0805:+.4f}')
+"

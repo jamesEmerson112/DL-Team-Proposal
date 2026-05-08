@@ -373,11 +373,24 @@ class Hyperparameters:
     is_main_process = rank == 0
     grad_accum_steps = int(os.environ.get("GRAD_ACCUM_STEPS", 8 // world_size))
     # CaseOps integration: optional override of dataset root + tokenizer path.
-    # When CASEOPS_ENABLED=1, the wrapper loads a per-token byte sidecar
-    # (fineweb_val_bytes_*.bin, identical shard layout to val_*.bin) and uses
-    # it as the canonical raw-byte budget for BPB accounting. The sidecar
-    # REPLACES the build_sentencepiece_luts byte-counting path entirely.
-    caseops_enabled = bool(int(os.environ.get("CASEOPS_ENABLED", "0")))
+    # CASEOPS_ENABLED accepts "0" | "1" | "auto" (default: "auto").
+    #   "0"    standard data + LUT byte counting (leaderboard convention).
+    #   "1"    CaseOps data + sidecar byte counting (canonical raw bytes).
+    #   "auto" standard data paths; eval stage may upgrade to sidecar if the
+    #          tokenizer fingerprint identifies it as a CaseOps tokenizer AND
+    #          a sidecar file is present. Otherwise it errors loudly rather
+    #          than silently inflating BPB via a CaseOps-poisoned LUT.
+    # The path-resolution stage uses caseops_data_paths_requested (True iff
+    # mode == "1"); the eval-stage byte-source decision happens in
+    # ValidationData.__init__ AFTER the tokenizer is loaded so a
+    # tokenizer-fingerprint guard can refuse silent BPB inflation.
+    # See: docs/James_test/p1a_vs_p3_comparison.txt Section 3a.
+    caseops_mode = os.environ.get("CASEOPS_ENABLED", "auto").strip().lower()
+    if caseops_mode not in ("0", "1", "auto"):
+        raise ValueError(
+            f"CASEOPS_ENABLED must be one of 0/1/auto; got {caseops_mode!r}"
+        )
+    caseops_data_paths_requested = (caseops_mode == "1")
     _default_caseops_data = os.path.join(
         data_dir,
         "datasets",
@@ -394,7 +407,7 @@ class Hyperparameters:
         "tokenizers",
         "fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model",
     )
-    if caseops_enabled:
+    if caseops_data_paths_requested:
         datasets_dir = os.environ.get("DATA_PATH", _default_caseops_data)
         tokenizer_path = os.environ.get("TOKENIZER_PATH", _default_caseops_tok)
     else:
@@ -460,15 +473,96 @@ class ValidationData:
             self.has_leading_space_lut,
             self.is_boundary_token_lut,
         ) = build_sentencepiece_luts(self.sp, h.vocab_size, device)
-        # CaseOps: when enabled, load per-token byte sidecar and stash it as a
-        # CPU tensor aligned 1:1 with self.val_tokens. eval_val/eval_val_ttt
-        # branches use this as the canonical raw-byte budget per token.
-        self.caseops_enabled = bool(getattr(h, "caseops_enabled", False))
+        # CaseOps byte-source resolution. Happens AFTER the tokenizer is loaded
+        # so the fingerprint guard (tokenizer_looks_like_caseops below) can
+        # refuse to silently inflate BPB when a CaseOps tokenizer was loaded
+        # under a "standard" config. See docs/James_test/p1a_vs_p3_comparison.txt
+        # Section 3a for the bug history that motivated this guard.
+        mode = getattr(h, "caseops_mode", "0")
+        fp_caseops = tokenizer_looks_like_caseops(self.sp)
+        sidecar_present = bool(glob.glob(h.val_bytes_files))
+        if mode == "1":
+            if not fp_caseops:
+                raise ValueError(
+                    "CASEOPS_ENABLED=1 but the loaded tokenizer does not look "
+                    "like a CaseOps tokenizer (no marker chars in first 2000 "
+                    f"pieces). tokenizer_path={h.tokenizer_path}. "
+                    "Use CASEOPS_ENABLED=auto, or replace the tokenizer."
+                )
+            if not sidecar_present:
+                raise FileNotFoundError(
+                    "CASEOPS_ENABLED=1 but no byte sidecar matches "
+                    f"{h.val_bytes_files!r}. Either point DATA_PATH at a "
+                    "CaseOps dataset that includes fineweb_val_bytes_*.bin, "
+                    "or use CASEOPS_ENABLED=0 with a standard tokenizer."
+                )
+            chosen = "sidecar"
+        elif mode == "0":
+            if fp_caseops:
+                raise ValueError(
+                    "CASEOPS_ENABLED=0 but the loaded tokenizer looks like a "
+                    "CaseOps tokenizer (marker chars in first 2000 pieces). "
+                    f"tokenizer_path={h.tokenizer_path}. Refusing to silently "
+                    "inflate BPB via a CaseOps-poisoned LUT. Replace the "
+                    "tokenizer with a standard one, or set CASEOPS_ENABLED="
+                    "auto/1."
+                )
+            chosen = "lut"
+        else:  # "auto"
+            if fp_caseops:
+                if not sidecar_present:
+                    raise FileNotFoundError(
+                        "CASEOPS_ENABLED=auto detected a CaseOps tokenizer at "
+                        f"{h.tokenizer_path} but no byte sidecar matches "
+                        f"{h.val_bytes_files!r}. Refusing to silently inflate "
+                        "BPB via a CaseOps-poisoned LUT. Either provide the "
+                        "sidecar (set DATA_PATH to a CaseOps dataset) or "
+                        "replace the tokenizer with a standard one."
+                    )
+                chosen = "sidecar"
+            else:
+                chosen = "lut"
+        self.tokenizer_fingerprint = "caseops" if fp_caseops else "standard"
+        self.byte_source = chosen
+        self.caseops_enabled = (chosen == "sidecar")
         self.val_bytes = None
         if self.caseops_enabled:
             self.val_bytes = load_validation_byte_sidecar(
                 h.val_bytes_files, h.eval_seq_len, self.val_tokens.numel()
             )
+        log(f"tokenizer_fingerprint: {self.tokenizer_fingerprint}")
+        log(f"byte_source: {self.byte_source}")
+
+
+# CaseOps SentencePiece tokenizers reserve dedicated pieces using these
+# Unicode small-cap (and combining-circle) markers as case/diacritic flags.
+# Standard SP-BPE pieces trained on FineWeb never emit these characters, so
+# scanning the first ~2000 piece IDs is sufficient: a single hit is dispositive.
+# Empirically derived from romeerp/parameter-golf-caseops-v1's tokenizer.
+# Extend if a future CaseOps revision adds new markers.
+_CASEOPS_MARKER_CHARS = ("ᴀ", "ᴄ", "ᴇ", "ᴏ", "ɴ", "ᴡ", "◌", "\ue001", "\ue002", "\ue003", "\ue004")
+
+
+def tokenizer_looks_like_caseops(sp, scan_pieces=2000):
+    """Heuristic fingerprint: returns True iff any piece in the first
+    `scan_pieces` token IDs contains a known CaseOps marker character.
+    Used by ValidationData to refuse silent BPB inflation when a CaseOps
+    tokenizer is loaded but byte counting is configured for the LUT path.
+    See docs/James_test/p1a_vs_p3_comparison.txt Section 3a."""
+    upper = min(int(sp.vocab_size()), int(scan_pieces))
+    for tid in range(upper):
+        if (
+            sp.is_control(tid)
+            or sp.is_unknown(tid)
+            or sp.is_unused(tid)
+            or sp.is_byte(tid)
+        ):
+            continue
+        piece = sp.id_to_piece(tid)
+        for m in _CASEOPS_MARKER_CHARS:
+            if m in piece:
+                return True
+    return False
 
 
 def build_sentencepiece_luts(sp, vocab_size, device):
@@ -3545,6 +3639,12 @@ def main():
         log("=" * 100, console=False)
         log(f"Running Python {sys.version}", console=False)
         log(f"Running PyTorch {torch.__version__}", console=False)
+        try:
+            nvsmi = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
+            if nvsmi.returncode == 0:
+                log(nvsmi.stdout, console=False)
+        except Exception:
+            pass
         log("=" * 100, console=False)
     train_and_eval(h, device)
     if distributed:

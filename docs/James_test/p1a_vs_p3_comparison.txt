@@ -1,0 +1,377 @@
+P1a vs P3 Comparison — Post-Retraction Analysis
+=================================================
+Summary: **P4b is new best legal run: 1.0621 BPB** (CaseOps + SOTA hparams + headwise gate,
+15.98 MB under budget). Beats C6 (1.0805) by −0.0184. Matches external SOTA (1.0611, delta 0.001).
+Byte ratio 0.3166 confirmed correct (CaseOps sidecar). Seed 1337 (mislabeled seed42 in RUN_ID).
+Previous: P1c had 3 bugs (corrected 1.087). P4_caseops INVALID (source failed). P1a over budget.
+
+Run Descriptions:
+  C6:     PR #1851 base + headwise gate + emb7+eclip15. Default batch/EMA/schedule.
+  P1a:    C6 + 6 SOTA hparam overrides (warmdown, min_lr, beta2, clip sigmas, gptq_reserve).
+          Same default batch size. Zero code changes vs C6, env vars only. OVER BUDGET.
+  P1c:    P1a but MATRIX_CLIP_SIGMAS tightened (12.0 vs 11.5) to fit under 16 MB.
+          Hypothesis: tighter clip costs ~0.001 BPB but saves ~0.4 MB.
+  P3-fix: PR #1851 base + headwise gate + EMA=0.990 + small batch (196K) + emb6.
+          CaseOps data + CASEOPS_ENABLED=1 (sidecar byte counting).
+          4× smaller batch → ~3× more steps, but noisier gradients.
+
+
+● Key findings from run 56425ee1 (P4_caseops — INVALID):
+
+  ROOT CAUSE: `source ../runs/configs/p4_caseops.env` silently failed (file not pushed
+  to remote). Bash continued with ALL PR #1851 defaults. No SOTA hparams applied.
+
+  Config that ACTUALLY ran (vs planned):
+    beta2=0.95 (plan: 0.99), warmdown_frac=0.75 (plan: 0.85), min_lr=0.0 (plan: 0.10),
+    caseops_enabled=False (plan: 1), gated_attn_enabled=False (plan: 1),
+    embed_bits=8 (plan: 7), embed_clip_sigmas=20.0 (plan: 14.0),
+    matrix_clip_sigmas=12.85 (plan: 12.5), gptq_reserve_seconds=4.0 (plan: 0.5),
+    muon_momentum=0.97 (plan: 0.99), qk_gain_init=5.0 (plan: 5.25)
+
+  The byte ratio is WRONG again. Computing BPB × ln(2) / val_loss:
+  - P4: 0.97560 × 0.6931 / 2.7612 = **0.2449**
+  - C6 (standard): 0.2683
+
+  That's ~9.6% inflation — CaseOps tokenizer contamination at standard path. Despite
+  CASEOPS_ENABLED=False, the tokenizer file was CaseOps (same bug as P3/P1c).
+
+  The val_loss tells the real story:
+  - P4 TTT val_loss: 2.7612 (slightly better than C6)
+  - C6 TTT val_loss: ~2.8092
+
+  Normalized to C6's byte ratio: P4 corrected BPB ≈ 1.069 — better than C6 (1.0805)
+  by ~0.012, BUT this used PR #1851 defaults (no gated attn, no SOTA hparams), so
+  the comparison is meaningless for evaluating P4_caseops config.
+
+  Steps: 5,045 (more than C6's ~4,467). Layer loop activated at step 4,416 (frac=0.35),
+  cutting throughput from ~8.4M to ~6.7M tok/s.
+
+  Size: 16,931,143 bytes (16.14 MB) — OVER BUDGET (embed_bits=8 instead of 7).
+
+  This run is DOUBLY INVALID: wrong config + CaseOps byte contamination. Must rerun
+  with correct config pushed to remote + tokenizer fingerprint check.
+
+────────────────────────────────────────────────────────────────────────────────
+1. Side-by-Side Config
+────────────────────────────────────────────────────────────────────────────────
+
+| Parameter             | C6 (reference)   | P1c (running)          | **P4b (NEW BEST)**     | P3 (corrected)         |
+|-----------------------|------------------|-----------------------|------------------------|------------------------|
+| Base stack            | @bigbag PR #1851 | @bigbag PR #1851      | @bigbag PR #1851       | @bigbag PR #1851       |
+| GATED_ATTN            | headwise         | headwise              | headwise               | headwise               |
+| EMA_DECAY             | 0.9965 (default) | 0.9965 (default)      | 0.9965 (default)       | 0.990                  |
+| TRAIN_BATCH_TOKENS    | 786432 (default) | 786432 (default)      | 786432 (default)       | 196608 (small batch)   |
+| WARMDOWN_FRAC         | 0.72             | 0.85 ★                | 0.85 ★                 | 0.75 (PR #1851 default)|
+| MIN_LR                | 0.0              | 0.10 ★                | 0.10 ★                 | 0.0                    |
+| MATRIX_CLIP_SIGMAS    | 12.85            | **12.0** ★★           | 13.0 ★★                | 12.85                  |
+| EMBED_CLIP_SIGMAS     | 15.0             | 14.0 ★                | 14.0 ★                 | 15.0                   |
+| BETA2                 | 0.95             | 0.99 ★                | 0.99 ★                 | 0.95                   |
+| GPTQ_RESERVE_SECONDS  | 12               | 0.5 ★                 | 0.5 ★                  | 4                      |
+| EMBED_BITS            | 7                | 7                     | 7                      | 6                      |
+| CASEOPS_ENABLED       | N/A              | N/A                   | 1 (intentional)        | 1 (corrected)          |
+| MUON_MOMENTUM         | 0.99             | 0.99                  | 0.99                   | 0.97 (PR #1851 default)|
+| QK_GAIN_INIT          | 5.25             | 5.25                  | 5.25                   | 5.0                    |
+| Steps (8×H100)        | ~4,467           | 3,056                 | 4,948                  | ~12,140                |
+| Budget?               | Yes (15.70 MB)   | NO (16.69 MB)         | Yes (15.98 MB)         | Yes (15.98 MB)         |
+
+★ = SOTA hparam override from PR #1855 (codemath3000)
+
+Key difference: P1c = P1a SOTA hparams on standard data (had 3 bugs).
+               P4b = P1c hparams + CaseOps + sidecar bytes + CLIP=13.0. NEW BEST.
+               P3 = training dynamics changes (EMA + small batch + emb6).
+
+────────────────────────────────────────────────────────────────────────────────
+2. Results Comparison
+────────────────────────────────────────────────────────────────────────────────
+
+| Run     | TTT BPB | val_loss | Steps  | Size      | Budget? | Status     |
+|---------|---------|----------|--------|-----------|---------|------------|
+| **P4b** | **1.0621**| 2.3242  | 4,948  | 15.98 MB  | Yes     | **NEW BEST** (CaseOps sidecar) |
+| ext SOTA| 1.0611  | —        | ~4,930 | ~15.90 MB | Yes     | PR #1855   |
+| P1a     | 1.0769  | 2.7816   | 4,587  | 16.35 MB  | NO      | Over budget |
+| C6      | 1.0805  | 2.7910   | 4,467  | 15.70 MB  | Yes     | SUBMITTED  |
+| P3-fix  | 1.0975* | 2.4012   | 12,140 | 15.98 MB  | Yes     | CORRECTED  |
+| P1c     | 0.9978  | 2.3912   | 3,056  | 16.69 MB  | NO      | GATE+BYTE BUG |
+
+*P3-fix = 2-seed mean (seed42: 1.09724, seed1337: 1.09779)
+P4b = seed 1337 (mislabeled seed42 in RUN_ID). Log: p4b_caseops_seed42.txt
+
+Delta from C6:  **P4b = −0.0184 (NEW BEST)**   P1a = −0.0036    P3-fix = +0.0170
+
+────────────────────────────────────────────────────────────────────────────────
+2a. P1c Bugs Found
+────────────────────────────────────────────────────────────────────────────────
+
+Bug 1: GATED_ATTN env var mismatch — gate was OFF
+  - p4_clip12.env had `GATED_ATTN=headwise` (V2 train_gpt_v2.py style)
+  - PR #1851 train_gpt.py reads `GATED_ATTN_ENABLED` (boolean, 0/1)
+  - Result: gated_attn_enabled: False in logs. Gate was completely OFF.
+  - The 0.9978 BPB was achieved WITHOUT gated attention.
+  - Fix: add `export GATED_ATTN_ENABLED=1` to config.
+
+Bug 2: CaseOps byte accounting — inflated byte denominator by ~9%
+  - Pod had CaseOps symlinks: fineweb10B_sp8192 → fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
+  - CASEOPS_ENABLED was not set → code used LUT byte counting on CaseOps tokenizer
+  - LUT includes case marker bytes not present in raw text → inflated denominator
+  - Token/byte ratio proof:
+      C6 (standard):    BPB×ln2/val_loss = 1.08753×0.6931/2.80919 = 0.2683
+      P1c (bugged LUT): BPB×ln2/val_loss = 1.00290×0.6931/2.39123 = 0.2907  ← neither standard nor correct
+      P3 (sidecar):     BPB×ln2/val_loss = 1.09260×0.6931/2.39117 = 0.3167  ← correct CaseOps
+  - P1c ratio (0.2907) falls between standard and correct — exactly where LUT inflation lands
+  - Correction factor: 0.3167 / 0.2907 = 1.0894 (~8.9% inflation, matches P3's ~9%)
+  - Corrected P1c BPB: Pre-Q 1.093 | Quant 1.100 | TTT **1.087** (worse than C6 by +0.0065)
+
+Bug 3: CaseOps training data — model trained on wrong data
+  - Pod symlinks pointed standard SP8192 paths to CaseOps-tokenized data
+  - Model was trained on CaseOps tokens, NOT standard SP8192
+  - val_loss (2.3912) reflects CaseOps data quality, not standard data
+  - Even with correct byte counting, results are not comparable to C6/P1a (different data)
+  - A clean re-run needs: fresh pod with standard data download (no symlinks)
+
+Bug 4: Still over budget (16.69 MB) even without gate
+  - MATRIX_CLIP_SIGMAS=12.0 not tight enough.
+  - With gate ON, model will have MORE parameters → even larger file.
+  - Fix: tighten MATRIX_CLIP_SIGMAS to 12.5 for re-run.
+
+Additional observations:
+  - model_params: 35,944,602 (without gate — gate adds ~headwise dim params)
+  - Pre-Q BPB: 1.0029 | Quant BPB: 1.0097 | TTT BPB: 0.9978 (ALL INFLATED — see Bug 2)
+  - Eval time: 443.6s | Seed: 1337
+  - The sub-1.0 BPB was an artifact. Corrected TTT BPB ≈ 1.087.
+
+────────────────────────────────────────────────────────────────────────────────
+3a. CaseOps Tokenizer Silent Inflation Bug (Pattern Across P3 + P1c)
+────────────────────────────────────────────────────────────────────────────────
+
+Both P3 (original) and P1c hit the SAME upstream-code design flaw. P3-fix
+proved sidecar bytes are correct; P1c "reset pod" attempt proved purging the
+data symlink isn't enough. The bug is in train_gpt.py (forked from PR #1851)
+and triggers whenever ALL of:
+
+  (a) A CaseOps tokenizer file sits at the standard tokenizer path on disk
+      (typically a hardlink/copy leftover from a prior CaseOps run), AND
+  (b) CASEOPS_ENABLED=0 (the default), AND
+  (c) The training pipeline runs to completion (no crash before eval).
+
+────────────────────────────────────────────────────────────────────────────────
+Mechanism (cite parameter-golf/train_gpt.py line numbers):
+────────────────────────────────────────────────────────────────────────────────
+
+  1. Line 380:
+       caseops_enabled = bool(int(os.environ.get("CASEOPS_ENABLED", "0")))
+     → defaults to False on a missing env var.
+
+  2. Lines 397-408: path resolution selects the STANDARD datasets_dir +
+     tokenizer_path on the False branch.
+     → BUT the file at tokenizer_path may be CaseOps content (silent leftover).
+
+  3. Line 452:
+       self.sp = spm.SentencePieceProcessor(model_file=h.tokenizer_path)
+     → loads whatever bytes are at that path. No fingerprint check.
+
+  4. Line 462:
+       (self.base_bytes_lut, ...) = build_sentencepiece_luts(self.sp, ...)
+     → LUT (look-up table) built from loaded pieces. CaseOps pieces include
+     small-cap markers (ᴀ ᴄ ᴇ ᴏ ɴ ᴡ ◌) whose UTF-8 encoding adds 3-4 bytes
+     per marker'd piece.
+
+  5. Line 478: vocab-size assert (8192 == 8192) passes for either tokenizer.
+     → No alarm bell.
+
+  6. Lines 2587-2602 (eval_val): val_data.caseops_enabled is False →
+       token_bytes = val_data.base_bytes_lut[tgt_ids]
+       val_byte_count += token_bytes.sum()
+     → INFLATED denominator from CaseOps-poisoned LUT.
+
+  7. BPB formula:
+       val_bpb = val_loss / ln(2) × (val_tokens / val_bytes)
+     Inflated bytes → BPB looks ~9% too good.
+
+────────────────────────────────────────────────────────────────────────────────
+Diagnostic (token/byte ratio sanity check):
+────────────────────────────────────────────────────────────────────────────────
+
+  ratio = val_bpb × ln(2) / val_loss
+
+  Standard SP8192 LUT:          ratio ≈ 0.268   ← canonical leaderboard
+  CaseOps tokenizer LUT (BUG):  ratio ≈ 0.245   ← ~9% inflation
+  CaseOps sidecar (canonical):  ratio ≈ 0.317   ← raw text bytes
+
+  Always check this ratio on a fresh pod. If not within ±0.005 of the expected
+  value for your config, something is contaminated.
+
+────────────────────────────────────────────────────────────────────────────────
+Empirical evidence (three runs, same root cause):
+────────────────────────────────────────────────────────────────────────────────
+
+  P3 original (Session 19):
+    Pod with CaseOps symlinks. CASEOPS_ENABLED=0. Reported 1.0066 BPB.
+    ratio: 1.0066 × ln(2) / 2.4012 = 0.291  ← bugged LUT inflation
+    Rerun with CASEOPS_ENABLED=1 + sidecar: 1.0972 BPB. Retracted PR #2071.
+
+  P1c original (logs/p4_clip12.txt):
+    Pod with CaseOps symlinks. CASEOPS_ENABLED=0. Reported 0.9978 BPB.
+    ratio: 0.9978 × ln(2) / 2.3789 = 0.291  ← same bugged LUT inflation
+
+  P1c reset (PR #2071 attachment p4_clip12_reset.txt):
+    Pod after "removing the data symlink". CASEOPS_ENABLED=0. Eval crashed
+    before TTT (missing python-minifier). Reported 1.0074 pre-Q post-EMA.
+    ratio: 1.0074 × ln(2) / 2.8511 = 0.245  ← STILL bugged: tokenizer file
+    was not refreshed even though the data dir was.
+
+────────────────────────────────────────────────────────────────────────────────
+Why "reset the pod" didn't fix it:
+────────────────────────────────────────────────────────────────────────────────
+
+Resetting the data symlink at data/datasets/fineweb10B_sp8192 reverts the
+tokenized data shards to standard. But the TOKENIZER file at
+data/tokenizers/fineweb_8192_bpe.model is a SEPARATE artifact. If the pod
+setup created it via copy or hard-link from a CaseOps tokenizer model (likely
+from the romeerp/parameter-golf-caseops-v1 HF cache hard-link chain), it
+persists across data-only resets. The vocab-size assertion at line 478 passes
+(both variants are 8192), so nothing complains.
+
+────────────────────────────────────────────────────────────────────────────────
+Operational fix (per-run, on a stale pod):
+────────────────────────────────────────────────────────────────────────────────
+
+  rm -f data/tokenizers/fineweb_8192_bpe.model
+  rm -f data/manifest.json
+  MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf python3 \
+    data/cached_challenge_fineweb.py --variant sp8192 --train-shards 80
+
+  # Verify (no case-marker pieces in first 30):
+  python3 -c "import sentencepiece as spm; \
+    sp = spm.SentencePieceProcessor(); \
+    sp.Load('./data/tokenizers/fineweb_8192_bpe.model'); \
+    print([sp.id_to_piece(i) for i in range(30)])"
+
+  # Then source p4_clip12.env and torchrun.
+
+────────────────────────────────────────────────────────────────────────────────
+Code-level fix (committed in parameter-golf/train_gpt.py):
+────────────────────────────────────────────────────────────────────────────────
+
+CASEOPS_ENABLED now accepts "0" | "1" | "auto" (default: "auto").
+
+  - "auto" (new default): standard data paths, but ValidationData.__init__
+    runs a tokenizer-fingerprint check at construction time. If the tokenizer
+    pieces contain CaseOps markers AND a sidecar file is present, auto-
+    upgrades to sidecar byte counting. If markers present but no sidecar, the
+    code REFUSES TO RUN (loud FileNotFoundError) rather than silently
+    inflating BPB. Standard tokenizer + auto = LUT path, identical to today.
+
+  - "0": as before, but now also errors loudly if the loaded tokenizer
+    fingerprint says CaseOps (no more silent inflation).
+
+  - "1": as before — explicitly request CaseOps data paths + sidecar. Also
+    errors if the loaded tokenizer fingerprint says NOT CaseOps (loud
+    mismatch instead of confusing downstream errors).
+
+  - Two new log lines fire at ValidationData construction:
+      tokenizer_fingerprint: <standard|caseops>
+      byte_source: <lut|sidecar>
+    grep these in any future log to confirm the byte source is what you
+    expect.
+
+  - The marker list (_CASEOPS_MARKER_CHARS in train_gpt.py) is empirically
+    derived from romeerp/parameter-golf-caseops-v1's tokenizer pieces.
+    If a future CaseOps revision changes markers, extend the constant.
+
+────────────────────────────────────────────────────────────────────────────────
+3. P3 Byte Accounting Error (Root Cause)
+────────────────────────────────────────────────────────────────────────────────
+
+Causal chain:
+  1. Pod setup created symlinks: standard paths → CaseOps data + tokenizer
+       ln -s fineweb10B_sp8192_lossless_caps_caseops_v1_reserved → fineweb10B_sp8192
+       ln -s fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model → fineweb_8192_bpe.model
+  2. Config set CASEOPS_ENABLED=0 (assumed irrelevant since data was already tokenized)
+  3. Code has two byte-counting paths:
+       CASEOPS_ENABLED=1 → loads sidecar file (fineweb_val_bytes_*.bin) = correct raw bytes
+       CASEOPS_ENABLED=0 → calls build_sentencepiece_luts() = bytes from tokenizer vocab
+  4. LUT path computed len(piece.encode("utf-8")) on CaseOps tokenizer pieces.
+     CaseOps pieces include case marker characters (not present in raw text).
+  5. Result: byte denominator ~164.6M (inflated) vs ~151M (canonical) = +8.3%
+     BPB formula: loss/ln2 × tokens/bytes → smaller denominator = higher BPB
+     Reported 1.0066 → actual 1.0975 (2-seed mean with correct sidecar counting)
+
+Fix: CASEOPS_ENABLED=1 + explicit data/tokenizer paths (no symlinks) + sidecar file.
+The val_loss (~2.40) was always genuine — only the BPB denominator was wrong.
+
+────────────────────────────────────────────────────────────────────────────────
+4. Key Takeaways
+────────────────────────────────────────────────────────────────────────────────
+
+1. BEST LEGAL RUN: C6 at 1.0805 BPB (3-seed mean, under budget, submitted PR #2005).
+   P1a beats it by −0.0036 but is 0.35 MB over budget.
+
+2. P3's techniques FAILED at 8×H100 scale (2-seed confirmed):
+   - EMA=0.990: proved on 2×H100 (−0.012) but HURT on 8×H100 (+0.0025 in L1).
+     Even with 12,140 steps (small batch), aggressive EMA doesn't help.
+   - Small batch: more steps (12,140 vs 4,467) but smaller batches degrade quality
+     more than extra updates help. L2 confirmed: +0.0121 vs C6.
+   - Combined (P3-fix): +0.0170 vs C6 (2-seed mean). Techniques compound negatively.
+
+3. P1a proves SOTA hparams transfer cleanly: zero code changes, just 6 env var
+   overrides from PR #1855. WARMDOWN=0.85 + MIN_LR=0.10 + BETA2=0.99 are the
+   likely drivers (extended training via warmdown + non-zero floor LR).
+
+4. P1a budget problem is MATRIX_CLIP_SIGMAS=11.5 (looser than C6's 12.85).
+   Allows larger weight magnitudes → compresses worse under brotli.
+   Fix: tighten to 12.0-12.5 to fit under 16 MB while retaining most gain.
+
+5. 2×H100 findings don't transfer to 8×H100:
+   - EMA=0.990: −0.012 on 2×H100 → +0.003 on 8×H100
+   - Small batch: −0.015 on 2×H100 → +0.012 on 8×H100
+   Root cause: 8 GPUs already give sufficient batch diversity; reducing batch
+   per-GPU just hurts signal-to-noise without the step-count payoff.
+
+6. val_loss vs BPB disconnect: P3-fix has LOWER val_loss (2.4012 vs 2.7816)
+   but HIGHER BPB (1.0972 vs 1.0769). This is because BPB = loss/ln2 × tokens/bytes,
+   and the token/byte ratio differs between CaseOps and standard tokenization.
+
+7. Path forward for beating C6 legally:
+   - P1c re-run on CLEAN pod (no CaseOps symlinks) with:
+     GATED_ATTN_ENABLED=1 + MATRIX_CLIP_SIGMAS=12.5 + standard SP8192 data
+   - P1c's corrected BPB (1.087) is WORSE than C6 (1.0805) — sub-1.0 was an artifact
+   - SOTA hparams still likely help (P1a = 1.0769 pre-bug), but gains are modest
+   - Or: cherry-pick individual SOTA hparams (WARMDOWN, MIN_LR) that don't
+     affect compression, skip MATRIX_CLIP_SIGMAS change entirely
+
+9. P1c has THREE bugs (gate OFF + byte inflation + wrong training data).
+   Only bug #1 (gate) was caught initially. Bugs #2-3 from pod CaseOps symlinks
+   are the same root cause as P3's retraction. Any run on a pod with CaseOps
+   symlinks is suspect — always verify token/byte ratio against C6 baseline (0.2683).
+
+8. PreQuantTTT is ruled out (C3 violation) — cannot use the technique that
+   made P3's val_loss so good (2.40 vs 2.78).
+
+────────────────────────────────────────────────────────────────────────────────
+5. P3-fix 2-Seed Reproducibility
+────────────────────────────────────────────────────────────────────────────────
+
+Corrected runs: CASEOPS_ENABLED=1, explicit data paths, sidecar byte counting.
+
+| Seed | Steps  | Pre-Q BPB | Quant BPB | TTT BPB  | Size (bytes) | Eval time |
+|------|--------|-----------|-----------|----------|--------------|-----------|
+| 42   | 12,155 | 1.09218   | 1.11237   | 1.09724  | 15,974,052   | 459s      |
+| 1337 | 12,123 | 1.09260   | 1.11247   | 1.09779  | 15,977,199   | 385s      |
+| Mean | 12,139 | 1.09239   | 1.11242   | 1.09751  | ~15,976K     | —         |
+
+Both seeds: under 16 MB budget, under 600s train time, under 600s eval time.
+Throughput: ~4000K tok/s (higher than earlier Session 21 rerun which got ~3500K).
+
+Log files: parameter-golf/logs/p3_corrected_seed42.txt, p3_corrected_seed1337.txt
+
+────────────────────────────────────────────────────────────────────────────────
+6. Cross-References
+────────────────────────────────────────────────────────────────────────────────
+
+- findings.md lines 562-591: Session 18 (P1a details, 6 hparam overrides)
+- findings.md lines 593-713: Session 19 (P3 details, byte accounting deep-dive)
+- findings.md lines 7-32: 8×H100 leaderboard table + annotations
+- runs/configs/p1a_hparam_sota.env: P1a full config
+- runs/configs/p3_caseops_corrected.env: P3 corrected config
+- neurlps-paper-survey.md: Paper #15 (small batch), Paper #25 (EMA)
+- docs/James_test/run_p3_rerun_correct_bytes.txt: P3 rerun runbook

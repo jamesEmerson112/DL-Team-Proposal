@@ -289,3 +289,110 @@ Active research + experimentation repository. Code modifications in `parameter-g
 - [finding] bigbag is no longer rank 1 — updated all references to remove "rank 1 SOTA"
 - [ref] PR: https://github.com/openai/parameter-golf/pull/2005
 - [ref] pg-fork clone at /tmp/pg-fork (ephemeral, not persisted locally)
+
+### 2026-05-01 (Session 20)
+- [edit] Updated `docs/parameter-golf/findings.md` with P3 SOTA results:
+  - Added P3 row to 8×H100 table (1.0066 BPB, 12,382 steps, ~15.97 MB)
+  - Updated SOTA references: 1.0066 (us, P3, PR #2071), previous 1.0611 (codemath3000)
+  - Added P3 3-seed reproducibility table (mean 1.0066 ±0.0009)
+  - Added Session 19 — P3 SOTA Runs (config table, 3-seed results, key findings, compliance)
+  - Restructured Official Leaderboard table — P3 at top as NEW
+  - Updated Key Insights #8 ($1,165/130+), #10 (P3 IS SOTA), added #20-22
+- [edit] Updated `docs/parameter-golf/neurlps-paper-survey.md`: header, leaderboard table, Paper #15, Techniques in Use — all reflect P3 1.0066 SOTA
+- [edit] Updated `docs/James_notes/pr2005_supplement.md`: EMA/Small Batch/Transfer sections with P3 data, fixed all "rank 1" → "@bigbag" (7 occurrences), experiment scale 130+/$1,165
+- [finding] **CaseOps data was actually used in P3** — pod had symlinks pointing standard SP8192 paths to CaseOps-tokenized data, even though `CASEOPS_ENABLED=0` was set. Updated all docs + pg-fork PR to reflect "CaseOps ON (via symlinked data)"
+- [feat] Updated pg-fork PR #2071: fixed CaseOps status, added full reproduction steps (download from romeerp/parameter-golf-caseops-v1 + symlink commands), updated PR description and acknowledgements
+- [finding] P3 logs ARE complete (4,112-4,120 lines per seed) — reviewer saw GitHub diff view truncation, not actual truncation
+- [research] Reviewed competing PRs: #2098 (0.80051, PPM+TTT), #2083 (0.94175, PPM no TTT), #2066 (SSM hybrid, non-record) — PPM submissions likely C2 violations per PR #1905 mathematical proof
+- [finding] P3 is the strongest pure neural network submission — no PPM, no byte mixing, clean C2 compliance
+- [ref] PR #2071: https://github.com/openai/parameter-golf/pull/2071
+
+### 2026-05-01 (Session 21 — P3 Byte Accounting Retraction)
+- [research] Investigated reviewer's byte accounting concern for PR #2071 (P3 submission). Traced full code path: `CASEOPS_ENABLED=0` + CaseOps tokenizer via symlink → `build_sentencepiece_luts()` at line 474 → LUT byte counting in `_accumulate_bpb()` at line 2691 → inflated byte denominator (~164.6M CaseOps-transformed bytes vs ~151M canonical raw bytes)
+- [finding] **P3 RETRACTED — byte accounting error confirmed.** Original 1.0066 BPB was artifact of inflated byte denominator. Rerun with `CASEOPS_ENABLED=1` (sidecar byte counting) gives **1.0972 BPB** (seed 42) — worse than C6 (1.0805) by +0.0167. val_loss (~2.401) was identical, confirming the issue was purely the byte denominator, not model quality.
+- [finding] Root cause: on the pod, standard paths were symlinked to CaseOps data (`ln -s fineweb10B_sp8192_lossless_caps_caseops_v1_reserved data/datasets/fineweb10B_sp8192`). With `CASEOPS_ENABLED=0`, code loaded CaseOps tokenizer but skipped sidecar file, using LUT byte counting that includes case marker bytes not present in raw text.
+- [finding] Confirmed sidecar file exists in `romeerp/parameter-golf-caseops-v1` HF repo: `datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_000000.bin` (1 sidecar for 1 val shard)
+- [finding] Download script (`data/cached_challenge_fineweb.py`) has a gap — it downloads token shards but NOT `fineweb_val_bytes_*.bin` sidecar files. Must download sidecar manually.
+- [finding] Default `_default_caseops_data` path in `train_gpt.py` (line 381-388) doesn't match where the download script puts data. Must set `DATA_PATH` explicitly when using `CASEOPS_ENABLED=1`.
+- [bugfix] Permission error during GPTQ calibration: `fineweb_train_000067.bin` had restrictive permissions from HF cache hard-links. Fixed with `chmod +r`.
+- [feat] Created `docs/James_test/run_p3_rerun_correct_bytes.txt` — runbook for rerunning P3 with correct byte accounting (CASEOPS_ENABLED=1 + explicit DATA_PATH + sidecar download)
+- [edit] Major update to `docs/parameter-golf/findings.md`: P3 retracted throughout — 8×H100 table, summary, compliance note, 3-seed table, Session 19 findings, legality feedback (added rerun results), leaderboard, Where We Stand, Key Insights #20/#22/#23. Best legal run reverted to C6 (1.0805).
+- [finding] **Best legal run: C6 at 1.0805 BPB** (3-seed mean). Gap to external SOTA (1.0611, PR #1855): +0.0194. P3's techniques (EMA=0.990 + small batch) do NOT help on PR #1851 stack at 8×H100 — consistent with L1/L2 failures on @bigbag stack.
+- [finding] CaseOps byte accounting is a silent trap — `CASEOPS_ENABLED=0` with CaseOps tokenizer inflates byte denominator by ~9% without warning. Must use `CASEOPS_ENABLED=1` with sidecar for correct BPB.
+- [ref] Rerun runbook: `docs/James_test/run_p3_rerun_correct_bytes.txt`
+
+### 2026-05-01 (Session 22 — P3 Corrected Logs + P1c Planning)
+- [feat] Read and analyzed 3 corrected P3 log files (CASEOPS_ENABLED=1, sidecar byte counting): `0d6ec472` (seed 42), `9a386796` (seed 1337), `7a3f8113` (seed 42, incomplete/truncated)
+- [finding] Corrected P3 2-seed results: seed42=1.09724, seed1337=1.09779, mean=1.0975 BPB — confirms +0.0170 worse than C6 (1.0805)
+- [finding] Corrected P3 steps: ~12,140 (due to small batch 196K tokens), but sees FEWER total tokens (~2.4B) than C6 (~3.5B with default 786K batch). More steps ≠ more learning.
+- [finding] PR #1851 base uses default batch (~4,930 steps). The ~12K steps are purely from our small batch override.
+- [feat] Renamed UUID log files: `0d6ec472...` → `p3_corrected_seed42.txt`, `9a386796...` → `p3_corrected_seed1337.txt`, `7a3f8113...` → `p3_corrected_seed42_incomplete.txt`
+- [edit] Updated `docs/James_notes/p1a_vs_p3_comparison.txt`: added run descriptions, P1c column to config table, 2-seed P3 reproducibility section, corrected steps/BPB/size
+- [feat] Created `runs/configs/p4_clip12.env` — P1c config: P1a + MATRIX_CLIP_SIGMAS=12.0 (tightened from 11.5 to fit under 16 MB budget)
+- [edit] Updated `docs/James_test/run_x1_8gpu_commands.txt` — clean pod instructions for P1c run (no comments, just commands)
+- [finding] MATRIX_CLIP_SIGMAS confirmed at `parameter-golf/train_gpt.py:320` — reads from env with default 12.85
+- [todo] Run P1c on 8×H100 pod. Expected: BPB ~1.077-1.080, size <16 MB. If passes → 3-seed for new best legal submission.
+
+### 2026-05-05 (Session 23 — Final Paper Appendix)
+- [edit] Added three appendices to `docs/James_notes/final_paper.txt` between bibliography and `\end{document}` (file grew 1211 → 1270 lines, +59 lines, purely additive — no changes to main body, references, or run numbers):
+  - **Appendix A: Code and Artifacts** — `\url{...}` links to project repo (`github.com/jamesEmerson112/DL-Team-Proposal`), Parameter Golf fork (`github.com/jamesEmerson112/parameter-golf`), record candidate PR (`github.com/openai/parameter-golf/pull/2005`), plus pointer to full audit trail of 130+ runs in `docs/parameter-golf/findings.md`
+  - **Appendix B: Reproduction** — two `verbatim` blocks: (1) 3-seed legal record (V2 stack, 1.0805 BPB, PR #2005) via `source runs/configs/v2_base.env` + headwise/emb7/eclip15 overrides + `torchrun ... train_gpt_v2.py`; (2) SOTA-overrides + CaseOps single-seed (1.0621 BPB, seed 1337) via `source runs/configs/p4b_caseops.env` + `torchrun ... train_gpt.py`, with note that CaseOps requires `romeerp/parameter-golf-caseops-v1` HF dataset + sidecar
+  - **Appendix C: Per-Seed Results** — booktabs table: V2 stack seeds (42=1.0818, 1337=1.0794, 2025=1.0804, mean 1.0805 ±0.0012) + V2+SOTA-overrides+CaseOps row (seed 1337 = 1.0621). Footnote on artifact sizes 15.70 MB vs 15.98 MB, both under 16 MB cap
+- [finding] Used plain `\section*{Appendix...}` instead of `\appendix` macro to avoid cvpr.sty renumbering of main-body sections; `hyperref` already loaded with `colorlinks` (line 21), so no extra package needed for clickable URLs
+- [finding] Verified post-edit: zero retracted-run regressions (no P3 / 2071 / 1.0066 / 1.0972 / "byte account" hits), three `\section*{Appendix...}` lines at expected positions (1211, 1226, 1249), file still terminates with `\end{document}`
+- [finding] Reproduction config for Appendix B verified by reading `runs/configs/p4b_caseops.env` directly: BETA2=0.99, WARMDOWN_FRAC=0.85, MIN_LR=0.10, EMBED_CLIP_SIGMAS=14.0, MATRIX_CLIP_SIGMAS=13.0, GPTQ_RESERVE_SECONDS=0.5, CASEOPS_ENABLED=1
+- [edit] Overwrote plan file `~/.claude/plans/this-subsection-of-references-mellow-shell.md` with the new appendix plan
+- [ref] Paper file: `docs/James_notes/final_paper.txt`
+
+### 2026-05-05 (Session 24 — Final Paper Reframing)
+- [edit] Major rewrite of `docs/James_notes/final_paper.txt` — reframed paper around "survey 29 papers, test 10, 8 fail" narrative instead of presenting adopted V2 stack as own contribution. File went from 1270 → 1212 lines (deleted ~160 lines commented-out old Experiments, added ~100 lines new content).
+- **Abstract**: Rewritten — leads with "8 of 10 techniques degraded performance," mentions headwise gated attention as sole consistent positive, frames compression/FA3/SP8192 as budget-layer contributions
+- **Introduction**: Reframed research question from "how good can a model become" to "which published techniques transfer to this extreme-constraint regime." Added survey→select→test→report methodology overview
+- **Related Work**: Restructured into 5 subsections:
+  - PG lineage (kept)
+  - **Nanochat study** (NEW) — co-led with Ranganath, informed SP8192 adoption, MHA/GQA stress-testing, LeakyReLU² choice
+  - **Adopted baseline** (NEW) — explicitly labels V2 stack as adopted from leaderboard, not claimed as contribution
+  - **Techniques under test** (NEW) — introduces all 10 techniques with citations
+  - Scope (kept)
+- **Approach**: Major restructure:
+  - Baseline now distinguishes V1 (original) vs V2 (adopted) with explicit attribution
+  - "Techniques investigated" → **"Score-layer techniques tested"** — all 10 listed with descriptions
+  - **"Budget-layer contributions"** (NEW subsection) — compression tuning (GPTQ int6+Brotli freed ~5 MB), SP8192 tokenizer, FA3+PyTorch 2.11 (~2× throughput). These opened doors to depth recurrence and MLP ratio exploration
+  - Contributions rewritten: 4 explicit claims (headwise gate, negative results, enablers, transfer analysis)
+- **Experiments**: Added 3 major new elements:
+  - **Technique Report Card** table (`tab:reportcard`) — all 10 techniques, delta BPB at 2×/8×H100, verdict column
+  - **SLM negative result** subsection with `fig:slm_sweep` placeholder
+  - **Enabler contributions** subsection
+  - `fig:technique_impact` placeholder (horizontal bar chart)
+  - `fig:transfer` placeholder (2×→8× paired comparison)
+  - Table 2 expanded with 5 new rows (LR warmup ×2, Structured FFN, Peri-LN, HybridNorm)
+  - Success/failure rewritten around 3 failure modes (throughput, normalization, scale-dependent)
+- **Discussion**: Added 4th pattern — **hardware-scale transfer is not free** (EMA/small batch helped on 2× but hurt on 8×). Headwise gate highlighted as only technique that transferred stably
+- **Conclusion**: Added paragraph explaining WHY headwise gated attention succeeds where others fail — negligible params (~37K), zero throughput penalty (single element-wise multiply), compresses cleanly under GPTQ. Frames the 3 constraints (params, throughput, compression) as a litmus test
+- **Team Contributions**: Updated An Thien Vo (emphasizes technique testing + headwise gate as novel), Siddarth (adds nanochat details: RoPE, RMSNorm, LeakyReLU², Muon, GQA study)
+- **Bibliography**: Added 3 new entries: `smallbatch` (Paper #15), `lrwarmup` (Paper #16), `structuredffn` (Paper #5)
+- **Cleanup**: Deleted ~160 lines of commented-out old Experiments section (was lines 242-408). Ashray's HybridNorm kept as-is per user request
+- [finding] All `\ref{}` targets verified — 3 new figures (technique_impact, slm_sweep, transfer), 1 new table (reportcard), all have matching `\label{}` definitions
+- [finding] All `\cite{}` keys verified — 29 bibitem entries cover all citations including 3 new ones
+- [finding] Zero retracted P3 numbers (1.0066, 1.0972) in final file — confirmed clean
+- [finding] 1.0621 BPB run correctly described as including headwise gate (V2 stack includes it)
+- [decision] Nanochat: paragraph in Related Work (not its own subsection)
+- [decision] Enablers (compression, FA3, PyTorch): framed as contributions, not just methodology
+- [decision] Both results kept prominently: C6 (1.0805, 3-seed verified) and 1.0621 (single-seed with adopted overrides + headwise gate)
+- [decision] Ashray's HybridNorm left as-is — user cannot validate logs but respects teammate's work
+- [decision] Tone: academic contribution (negative results are valuable)
+- [ref] Plan file: `~/.claude/plans/sprightly-brewing-wilkes.md`
+- [ref] Paper file: `docs/James_notes/final_paper.txt`
+- [todo] Create actual plot files for 3 figure placeholders: `fig:technique_impact`, `fig:slm_sweep`, `fig:transfer`
+
+### 2026-05-05 (Session 25 — Plot Integration into Paper)
+- [edit] Integrated 5 approved plots from `docs/plots/final/` into `docs/James_notes/final_paper.txt` for Overleaf:
+  - Edit 1: Updated `attention_variants.png` path to `final/attention_variants.png` (line 427)
+  - Edit 2: Added `final/reportcard_table.png` as a native LaTeX booktabs table (`tab:reportcard`) after the main results table — 4 columns (Technique, 2x ΔBPB, 8x ΔBPB, Verdict), 10 technique rows
+  - Edit 3: Added `final/v2_factorial.png` as `fig:factorial` between attention variants and transfer subsections
+  - Edit 4: Added `final/negative_results_panel.png` as full-width `figure*` (`fig:negative`) after training curves, before "Success, failure, and limitations"
+  - Edit 5: Added `final/main_results_table.png` as `fig:main-results` in Discussion section before concluding paragraph
+- [finding] Paper now has 7 `\includegraphics` (5 use `final/` prefix, 2 unchanged: `latex/Paper_Overview.png`, `training_curves.png`)
+- [finding] 7 unique figure labels + 1 new table label (`tab:reportcard`), no collisions
+- [decision] Converted reportcard image to native LaTeX booktabs table instead of using `\includegraphics` — better for text searchability and Overleaf rendering
+- [ref] Paper file: `docs/James_notes/final_paper.txt`
